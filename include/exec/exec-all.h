@@ -136,6 +136,9 @@ static inline void tlb_flush(CPUState *cpu, int flush_global)
 #endif
 
 struct TranslationBlock {
+	
+    bool iscall;	
+	
     target_ulong pc;   /* simulated PC corresponding to this block (EIP + CS base) */
     target_ulong cs_base; /* CS base for this block */
     uint64_t flags; /* flags defining in which context the code was generated */
