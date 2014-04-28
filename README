@@ -1,3 +1,63 @@
 Read the documentation in qemu-doc.html or on http://wiki.qemu-project.org
 
 - QEMU team
+
+
+一、安装过程
+================
+######1、下载源代码
+./configure 进行配置，--target-list选项可以指定目标机器的平台
+
+######2、简单系统下安装busybox  
+下载busyboxy源代码  
+编译busybox  
+修改busybox目录下的Makfile  
+第293行："LD =$(CC) -nostdlib " -->"LD =$(CC) -nostdlib -m32"  
+make deconfig  
+make menuconfig  
+1.修改Busybox SettingsBuild Option  [*]Build Busybox as a static binary(no shared libs)  
+2.[Busybox Settings]--->  
+     [Build Options]--->  
+        (-m32) Additional CFLAGS  
+        (-m32) Additional LDFLAGS  
+3.去掉不需要的功能，其它模块编译错误做法类似  
+  Networking Utilities --->   
+      [ ] inetd 
+4.make  
+5.make install  
+
+######3、qemu模拟linux
+1）、编写initrd启动脚本
+  cd  BUSYBOX/_install
+  mkdir proc sys dev etc 
+  cd etc
+  mkdir init.d
+  vim BUSYBOX/_install/init.d/rcS
+“#!/bin/sh
+  mount -t proc none /proc
+  mount -t sysfs none /sys
+  /sbin/mdev -s
+”
+          
+2）、编写构建initrd镜像脚本
+  vim BUSYBOX/kernel/build-initrd.sh
+              “#!/bin/sh
+               KERNEL=$(pwd)
+               BUSYBOX=$(find busybox* -maxdepth 0)
+               cd $BUSYBOX/_install
+               find . |cpio -o --format=newc > $KERNEL/rootfs.img
+               cd $KERNEL
+               gzip -c rootfs.img >rootfs.img.gz”
+               
+3)、编写启动脚本
+ vim BUSYBOX/kernel/run.sh
+             “#!/bin/sh
+             /home/XXX/qemu/i386-softmmu/qemu-system-i386 -kernel /home/ /LINUX/arch/i386/boot/bzImage -initrd rootfs.img -append “root=/dev/ram rdinit=sbin/init” –d exec –D qemu.log
+             “
+              ./run.sh  运行busybox系统
+
+
+-d 参数可以指定日志记录的项目，其中exec是执行翻译块（TB）的记录，数量非常多，速度会很慢
+-D 参数指定将日志输出到这个文件中
+
+
