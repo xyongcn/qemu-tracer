@@ -4421,6 +4421,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
     s->override = -1;
     rex_w = -1;
     rex_r = 0;
+    
+    s->tb->iscall=false;
+    
 #ifdef TARGET_X86_64
     s->rex_x = 0;
     s->rex_b = 0;
