@@ -6,7 +6,8 @@ Read the documentation in qemu-doc.html or on http://wiki.qemu-project.org
 一、安装过程
 ================
 ######1、下载源代码
-./configure 进行配置，--target-list选项可以指定目标机器的平台
+./configure 进行配置，--target-list选项可以指定目标机器的平台，还有其他很多选项，参见./configure --help
+make
 
 ######2、简单系统下安装busybox  
 下载busyboxy源代码  
