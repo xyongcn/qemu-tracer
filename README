@@ -27,7 +27,7 @@ make menuconfig
 5.make install  
 
 ######3、qemu模拟linux
-1）、编写initrd启动脚本
+1）、编写initrd启动脚本，其中BUSYBOX是busybox的路径
   cd  BUSYBOX/_install
   mkdir proc sys dev etc 
   cd etc
@@ -43,7 +43,7 @@ make menuconfig
   vim BUSYBOX/kernel/build-initrd.sh
               “#!/bin/sh
                KERNEL=$(pwd)
-               BUSYBOX=$(find busybox* -maxdepth 0)
+               BUSYBOX=busybox的路径
                cd $BUSYBOX/_install
                find . |cpio -o --format=newc > $KERNEL/rootfs.img
                cd $KERNEL
