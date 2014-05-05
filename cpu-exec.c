@@ -229,6 +229,8 @@ int cpu_exec(CPUArchState *env)
     uintptr_t next_tb;
     /* This must be volatile so it is not trashed by longjmp() */
     volatile bool have_tb_lock = false;
+    
+    bool isoutput=false;
 
     if (cpu->halted) {
         if (!cpu_has_work(cpu)) {
@@ -617,13 +619,21 @@ int cpu_exec(CPUArchState *env)
                     qemu_log("Trace %p [" TARGET_FMT_lx "] size is %d %s\n",
                              tb->tc_ptr, tb->pc, tb->size, lookup_symbol(tb->pc));
                 }
+                
+                if(isoutput){
+					qemu_log("%" PRId64 ",%08x,%08x," TARGET_FMT_lx "\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),(uint32_t)env->cr[3],(uint32_t)env->regs[R_ESP],tb->pc);
+					isoutput=false;
+				}
+                if(tb->iscall)
+					isoutput=true;  
+					
                 /* see if we can patch the calling TB. When the TB
                    spans two pages, we cannot safely do a direct
                    jump. */
-                if (next_tb != 0 && tb->page_addr[1] == -1) {
+                /*if (next_tb != 0 && tb->page_addr[1] == -1) {
                     tb_add_jump((TranslationBlock *)(next_tb & ~TB_EXIT_MASK),
                                 next_tb & TB_EXIT_MASK, tb);
-                }
+                }no jump to trace function call*/
                 have_tb_lock = false;
                 spin_unlock(&tcg_ctx.tb_ctx.tb_lock);
 
