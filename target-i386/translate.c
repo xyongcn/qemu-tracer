@@ -4941,6 +4941,8 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
             break;
         case 2: /* call Ev */
             /* XXX: optimize if memory (no 'and' is necessary) */
+            s->tb->iscall = true ;
+            
             if (dflag == MO_16) {
                 tcg_gen_ext16u_tl(cpu_T[0], cpu_T[0]);
             }
@@ -4949,11 +4951,10 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
             gen_push_v(s, cpu_T[1]);
             gen_op_jmp_v(cpu_T[0]);
             gen_eob(s);
-            
-            s->tb->iscall = true ;
-            
             break;
         case 3: /* lcall Ev */
+            s->tb->iscall = true ;
+            
             gen_op_ld_v(s, ot, cpu_T[1], cpu_A0);
             gen_add_A0_im(s, 1 << ot);
             gen_op_ld_v(s, MO_16, cpu_T[0], cpu_A0);
@@ -4972,9 +4973,6 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
                                       tcg_const_i32(s->pc - s->cs_base));
             }
             gen_eob(s);
-            
-            s->tb->iscall = true ;
-            
             break;
         case 4: /* jmp Ev */
             if (dflag == MO_16) {
@@ -6456,6 +6454,8 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         break;
     case 0xe8: /* call im */
         {
+            s->tb->iscall = true ;
+            
             if (dflag != MO_16) {
                 tval = (int32_t)insn_get(env, s, MO_32);
             } else {
@@ -6472,14 +6472,13 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
             gen_push_v(s, cpu_T[0]);
             gen_jmp(s, tval);
         }
-        
-        s->tb->iscall = true ;
-        
         break;
     case 0x9a: /* lcall im */
         {
             unsigned int selector, offset;
 
+            s->tb->iscall = true ;
+            
             if (CODE64(s))
                 goto illegal_op;
             ot = dflag;
