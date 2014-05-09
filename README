@@ -57,6 +57,48 @@ make menuconfig
  ./run.sh  运行busybox系统
 其中bzImage是linux内核编译出的文件，在arch/i386/boot文件夹下，rootfs.img是上一步创建的镜像文件
 -d 参数可以指定日志记录的项目，其中exec是执行翻译块（TB）的记录，数量非常多，速度会很慢
+我对qemu做了一定的修改，使它会记录每一个执行的tb，并增加了-d的一个选项 func可以只追踪函数调用
 -D 参数指定将日志输出到这个文件中
+
+4.可加载模块
+编译可加载模块，代码应满足一定的格式
+#include <linux/module.h>
+#include <linux/kernel.h>
+
+int factorial(int num)
+{
+	if (num == 1 || num == 0)
+		return 1;
+	else
+		return num * (num - 1);
+}
+int init_module(void)
+{
+	printk(KERN_INFO "5! = %d\n", factorial(5));
+	return 0;
+}
+
+void cleanup_module(void)
+{
+	printk(KERN_INFO "Goodbye!\n");
+}
+
+并要有Makefile
+obj-m := factorial.o
+KDIR := /home/frank/linux-3.5.4（这里是linux源码所在的文件夹的路径）
+PWD := $(shell pwd)
+
+all:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+ 
+clean:
+	$(MAKE) -C $(KDIR) M=$(PWD) clean
+
+将编译好的.ko文件放到busybox-1.22.1/_install/lib/modules/3.5.4/extra/文件夹下，
+在虚拟机中执行modprobe或insmod（具体使用可参考帮助）载入模块
+
+
+
+
 
 
