@@ -52,6 +52,7 @@ make menuconfig
                
 3)、编写启动脚本
  vim BUSYBOX/kernel/run.sh
+ 注：以下代码不要复制粘贴！请手动输入！！
 “#!/bin/sh
 /home/XXX/qemu/i386-softmmu/qemu-system-i386 -kernel /home/LINUX/arch/i386/boot/bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" –d exec –D qemu.log“
  ./run.sh  运行busybox系统
