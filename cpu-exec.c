@@ -625,7 +625,7 @@ int cpu_exec(CPUArchState *env)
                    spans two pages, we cannot safely do a direct
                    jump. */
                    
-                if (qemu_loglevel_mask(CPU_LOG_FUNC) || qemu_loglevel_mask(CPU_LOG_EXEC)) {   					
+                if (qemu_loglevel_mask(CPU_LOG_FUNC)) {   					
 					/*if(tb->pc >= 0xc8814000 && tb->pc <0xd0000000){
 						unsigned long p_modules=0xc1860cb8;					
 						unsigned long current_module_addr = p_modules - 4;
@@ -654,12 +654,12 @@ int cpu_exec(CPUArchState *env)
 					else if(lasttbtype==TB_RET) 
 						qemu_log("%" PRId64 " %08x %08x\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),(uint32_t)env->cr[3],(uint32_t)env->regs[R_ESP]);	
 					lasttbtype=tb->type;	
-				} else 
+		}  
 				  
-				if (next_tb != 0 && tb->page_addr[1] == -1) {
+		/*if (next_tb != 0 && tb->page_addr[1] == -1) {
                     tb_add_jump((TranslationBlock *)(next_tb & ~TB_EXIT_MASK),
                                 next_tb & TB_EXIT_MASK, tb);
-                } 
+                }*/ 
                 have_tb_lock = false;
                 spin_unlock(&tcg_ctx.tb_ctx.tb_lock);
 
