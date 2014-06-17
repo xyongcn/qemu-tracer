@@ -6,16 +6,19 @@ Read the documentation in qemu-doc.html or on http://wiki.qemu-project.org
 一、安装过程
 ================
 ######1、下载源代码
+目前QEMU的版本是2.0.0
 ./configure 进行配置，--target-list选项可以指定目标机器的平台，还有其他很多选项，参见./configure --help
-make
+然后执行make命令
 
 ######2、简单系统下安装busybox  
-下载busyboxy源代码  
-编译busybox  
-修改busybox目录下的Makfile  
+下载busybox1.22.1源代码  
+编译对应平台的busybox  
+修改busybox目录下的Makefile  
 第293行："LD =$(CC) -nostdlib " -->"LD =$(CC) -nostdlib -m32"  
-make deconfig  
-make menuconfig  
+参见configs/busybox/Makefile文件
+以x86_32为例
+make ARCH=i386 deconfig  
+make ARCH=i386 menuconfig  
 1.修改Busybox SettingsBuild Option  [*]Build Busybox as a static binary(no shared libs)  
 2.[Busybox Settings]--->  
      [Build Options]--->  
@@ -24,8 +27,9 @@ make menuconfig
 3.去掉不需要的功能，其它模块编译错误做法类似  
   Networking Utilities --->   
       [ ] inetd 
-4.make  
-5.make install  
+最终的配置文件参加configs/busybox/.config文件
+4.make ARCH=i386
+5.make ARCH=i386 install
 
 ######3、qemu模拟linux
 1）、编写initrd启动脚本，其中BUSYBOX是busybox的路径
@@ -39,6 +43,7 @@ make menuconfig
   mount -t sysfs none /sys
   /sbin/mdev -s
 ”
+参见configs/busybox/rcS文件
           
 2）、编写构建initrd镜像脚本
   vim BUSYBOX/kernel/build-initrd.sh
@@ -49,12 +54,15 @@ make menuconfig
                find . |cpio -o --format=newc > $KERNEL/rootfs.img
                cd $KERNEL
                gzip -c rootfs.img >rootfs.img.gz”
+参见configs/busybox/build-initrd.sh文件               
+               
                
 3)、编写启动脚本
  vim BUSYBOX/kernel/run.sh
  注：以下代码不要复制粘贴！请手动输入！！
-“#!/bin/sh
-/home/XXX/qemu/i386-softmmu/qemu-system-i386 -kernel /home/LINUX/arch/i386/boot/bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" –d exec –D qemu.log“
+"#!/bin/sh
+/home/XXX/qemu/i386-softmmu/qemu-system-i386 -kernel /home/LINUX/arch/i386/boot/bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" –d exec –D qemu.log"
+参见configs/busybox/run.sh文件
  ./run.sh  运行busybox系统
 其中bzImage是linux内核编译出的文件，在arch/i386/boot文件夹下，rootfs.img是上一步创建的镜像文件
 -d 参数可以指定日志记录的项目，其中exec是执行翻译块（TB）的记录，数量非常多，速度会很慢
@@ -63,40 +71,10 @@ make menuconfig
 
 4.可加载模块
 编译可加载模块，代码应满足一定的格式
-#include <linux/module.h>
-#include <linux/kernel.h>
-
-int factorial(int num)
-{
-	if (num == 1 || num == 0)
-		return 1;
-	else
-		return num * (num - 1);
-}
-int init_module(void)
-{
-	printk(KERN_INFO "5! = %d\n", factorial(5));
-	return 0;
-}
-
-void cleanup_module(void)
-{
-	printk(KERN_INFO "Goodbye!\n");
-}
-
-并要有Makefile
-obj-m := factorial.o
-KDIR := /home/frank/linux-3.5.4（这里是linux源码所在的文件夹的路径）
-PWD := $(shell pwd)
-
-all:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
- 
-clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
-
+示例参见configs/module/factorial.c文件
+并要有Makefile，参见configs/module/Makefile文件
 将编译好的.ko文件放到busybox-1.22.1/_install/lib/modules/3.5.4/extra/文件夹下，
-在虚拟机中执行modprobe或insmod（具体使用可参考帮助）载入模块
+在虚拟机中执行modprobe或insmod命令（具体使用可参考Linux使用帮助）载入模块
 
 
 
