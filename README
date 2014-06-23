@@ -27,7 +27,7 @@ make ARCH=i386 menuconfig
 3.去掉不需要的功能，其它模块编译错误做法类似  
   Networking Utilities --->   
       [ ] inetd 
-最终的配置文件参加configs/busybox/.config文件
+最终的配置文件参见configs/busybox/config文件
 4.make ARCH=i386
 5.make ARCH=i386 install
 
@@ -37,7 +37,7 @@ make ARCH=i386 menuconfig
   mkdir proc sys dev etc 
   cd etc
   mkdir init.d
-  vim BUSYBOX/_install/init.d/rcS
+  vim BUSYBOX/_install/etc/init.d/rcS
 “#!/bin/sh
   mount -t proc none /proc
   mount -t sysfs none /sys
