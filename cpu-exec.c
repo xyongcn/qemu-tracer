@@ -708,15 +708,14 @@ int cpu_exec(CPUArchState *env)
 						qemu_log("%"PRId64" "TARGET_FMT_lx" "TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->regs[13],tb->pc);	
 					else if(lasttbtype==TB_RET)
 						qemu_log("%"PRId64" "TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->regs[13]);	
-					lasttbtype=tb->type;
-						
+					lasttbtype=tb->type;				
 #endif				
-				} else 
+				}
 				  
-				if (next_tb != 0 && tb->page_addr[1] == -1) {
+				/*if (next_tb != 0 && tb->page_addr[1] == -1) {
                     tb_add_jump((TranslationBlock *)(next_tb & ~TB_EXIT_MASK),
                                 next_tb & TB_EXIT_MASK, tb);
-                }
+                }*/
                 have_tb_lock = false;
                 spin_unlock(&tcg_ctx.tb_ctx.tb_lock);
 
