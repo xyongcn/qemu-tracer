@@ -232,7 +232,22 @@ int cpu_exec(CPUArchState *env)
     /* This must be volatile so it is not trashed by longjmp() */
     volatile bool have_tb_lock = false;
     
-    uint8_t lasttbtype=TB_DEFAULT;
+	if (qemu_loglevel_mask(CPU_LOG_FUNC)) {       
+		uint8_t lasttbtype=TB_DEFAULT; 
+		bool isoutput=false;
+		target_ulong kernel_start,kernel_end,busybox_start,busybox_end,modules_addr;
+		
+#ifdef TARGET_X86_64
+		target_ulong lastpc;
+#endif
+    
+#ifdef TARGET_I386
+		char modulename[64-sizeof(target_ulong)];	
+		FILE *addrs_file = fopen("addrs", "r"); 
+		if(fscanf(addrs_file,TARGET_FMT_lx TARGET_FMT_lx TARGET_FMT_lx TARGET_FMT_lx TARGET_FMT_lx,&kernel_start,&kernel_end,&busybox_start,&busybox_end,&modules_addr))
+			fclose(addrs_file); 
+#endif
+	}
 
     if (cpu->halted) {
         if (!cpu_has_work(cpu)) {
