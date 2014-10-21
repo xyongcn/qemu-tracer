@@ -182,10 +182,9 @@ static const char *find_typename_by_alias(const char *alias)
 
 int qdev_device_help(QemuOpts *opts)
 {
-    Error *local_err = NULL;
     const char *driver;
-    DevicePropertyInfoList *prop_list;
-    DevicePropertyInfoList *prop;
+    Property *prop;
+    ObjectClass *klass;
 
     driver = qemu_opt_get(opts, "driver");
     if (driver && is_help_option(driver)) {
@@ -197,28 +196,35 @@ int qdev_device_help(QemuOpts *opts)
         return 0;
     }
 
-    if (!object_class_by_name(driver)) {
+    klass = object_class_by_name(driver);
+    if (!klass) {
         const char *typename = find_typename_by_alias(driver);
 
         if (typename) {
             driver = typename;
+            klass = object_class_by_name(driver);
         }
     }
 
-    prop_list = qmp_device_list_properties(driver, &local_err);
-    if (!prop_list) {
-        error_printf("%s\n", error_get_pretty(local_err));
-        error_free(local_err);
-        return 1;
+    if (!klass) {
+        return 0;
     }
-
-    for (prop = prop_list; prop; prop = prop->next) {
-        error_printf("%s.%s=%s\n", driver,
-                     prop->value->name,
-                     prop->value->type);
-    }
-
-    qapi_free_DevicePropertyInfoList(prop_list);
+    do {
+        for (prop = DEVICE_CLASS(klass)->props; prop && prop->name; prop++) {
+            /*
+             * TODO Properties without a parser are just for dirty hacks.
+             * qdev_prop_ptr is the only such PropertyInfo.  It's marked
+             * for removal.  This conditional should be removed along with
+             * it.
+             */
+            if (!prop->info->set) {
+                continue;           /* no way to set it, don't show */
+            }
+            error_printf("%s.%s=%s\n", driver, prop->name,
+                         prop->info->legacy_name ?: prop->info->name);
+        }
+        klass = object_class_get_parent(klass);
+    } while (klass != object_class_by_name(TYPE_DEVICE));
     return 1;
 }
 
@@ -416,14 +422,12 @@ static BusState *qbus_find(const char *path)
              * one child bus accept it nevertheless */
             switch (dev->num_child_bus) {
             case 0:
-                qerror_report(ERROR_CLASS_GENERIC_ERROR,
-                              "Device '%s' has no child bus", elem);
+                qerror_report(QERR_DEVICE_NO_BUS, elem);
                 return NULL;
             case 1:
                 return QLIST_FIRST(&dev->child_bus);
             default:
-                qerror_report(ERROR_CLASS_GENERIC_ERROR,
-                              "Device '%s' has multiple child busses", elem);
+                qerror_report(QERR_DEVICE_MULTIPLE_BUSSES, elem);
                 if (!monitor_cur_is_qmp()) {
                     qbus_list_bus(dev);
                 }
@@ -501,16 +505,14 @@ DeviceState *qdev_device_add(QemuOpts *opts)
             return NULL;
         }
         if (!object_dynamic_cast(OBJECT(bus), dc->bus_type)) {
-            qerror_report(ERROR_CLASS_GENERIC_ERROR,
-                          "Device '%s' can't go on a %s bus",
+            qerror_report(QERR_BAD_BUS_FOR_DEVICE,
                           driver, object_get_typename(OBJECT(bus)));
             return NULL;
         }
     } else if (dc->bus_type != NULL) {
         bus = qbus_find_recursive(sysbus_get_default(), NULL, dc->bus_type);
         if (!bus) {
-            qerror_report(ERROR_CLASS_GENERIC_ERROR,
-                          "No '%s' bus found for device '%s'",
+            qerror_report(QERR_NO_BUS_FOR_DEVICE,
                           dc->bus_type, driver);
             return NULL;
         }
@@ -607,20 +609,14 @@ static void qdev_print(Monitor *mon, DeviceState *dev, int indent)
 {
     ObjectClass *class;
     BusState *child;
-    NamedGPIOList *ngl;
-
     qdev_printf("dev: %s, id \"%s\"\n", object_get_typename(OBJECT(dev)),
                 dev->id ? dev->id : "");
     indent += 2;
-    QLIST_FOREACH(ngl, &dev->gpios, node) {
-        if (ngl->num_in) {
-            qdev_printf("gpio-in \"%s\" %d\n", ngl->name ? ngl->name : "",
-                        ngl->num_in);
-        }
-        if (ngl->num_out) {
-            qdev_printf("gpio-out \"%s\" %d\n", ngl->name ? ngl->name : "",
-                        ngl->num_out);
-        }
+    if (dev->num_gpio_in) {
+        qdev_printf("gpio-in %d\n", dev->num_gpio_in);
+    }
+    if (dev->num_gpio_out) {
+        qdev_printf("gpio-out %d\n", dev->num_gpio_out);
     }
     class = object_get_class(OBJECT(dev));
     do {

@@ -402,7 +402,7 @@ DefinitionBlock (
         define_gsi_link(GSIH, 0, 0x17)
     }
 
-#include "hw/acpi/pc-hotplug.h"
+#include "hw/acpi/cpu_hotplug_defs.h"
 #define CPU_STATUS_BASE ICH9_CPU_HOTPLUG_IO_BASE
 #include "acpi-dsdt-cpu-hotplug.dsl"
 
@@ -410,7 +410,6 @@ DefinitionBlock (
 /****************************************************************
  * General purpose events
  ****************************************************************/
-    External(\_SB.PCI0.MEMORY_HOTPLUG_DEVICE.MEMORY_SLOT_SCAN_METHOD, MethodObj)
 
     Scope(\_GPE) {
         Name(_HID, "ACPI0006")
@@ -423,9 +422,7 @@ DefinitionBlock (
             // CPU hotplug event
             \_SB.PRSC()
         }
-        Method(_E03) {
-            // Memory hotplug event
-            \_SB.PCI0.MEMORY_HOTPLUG_DEVICE.MEMORY_SLOT_SCAN_METHOD()
+        Method(_L03) {
         }
         Method(_L04) {
         }

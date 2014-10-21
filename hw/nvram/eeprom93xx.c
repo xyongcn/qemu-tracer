@@ -125,7 +125,8 @@ static const VMStateDescription vmstate_eeprom = {
     .name = "eeprom",
     .version_id = EEPROM_VERSION,
     .minimum_version_id = OLD_EEPROM_VERSION,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = OLD_EEPROM_VERSION,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT8(tick, eeprom_t),
         VMSTATE_UINT8(address, eeprom_t),
         VMSTATE_UINT8(command, eeprom_t),

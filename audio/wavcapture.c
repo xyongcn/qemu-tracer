@@ -63,7 +63,8 @@ static void wav_destroy (void *opaque)
         }
     doclose:
         if (fclose (wav->f)) {
-            error_report("wav_destroy: fclose failed: %s", strerror(errno));
+            fprintf (stderr, "wav_destroy: fclose failed: %s",
+                     strerror (errno));
         }
     }
 

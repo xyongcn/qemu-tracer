@@ -3,7 +3,7 @@
 CROSS=lm32-elf-
 
 SIM = qemu-system-lm32
-SIMFLAGS = -M lm32-evr -nographic -semihosting -net none -kernel
+SIMFLAGS = -M lm32-evr -nographic -device lm32-sys -net none -kernel
 
 CC      = $(CROSS)gcc
 AS      = $(CROSS)as
@@ -18,7 +18,6 @@ LDFLAGS = -T$(TSRC_PATH)/linker.ld
 ASFLAGS += -Wa,-I,$(TSRC_PATH)/
 
 CRT        = crt.o
-HELPER     = helper.o
 TESTCASES += test_add.tst
 TESTCASES += test_addi.tst
 TESTCASES += test_and.tst
@@ -92,15 +91,15 @@ all: build
 %.o: $(TSRC_PATH)/%.S
 	$(AS) $(ASFLAGS) -c $< -o $@
 
-%.tst: %.o $(TSRC_PATH)/macros.inc $(CRT) $(HELPER)
-	$(LD) $(LDFLAGS) $(NOSTDFLAGS) $(CRT) $(HELPER) $< -o $@
+%.tst: %.o $(TSRC_PATH)/macros.inc $(CRT)
+	$(LD) $(LDFLAGS) $(NOSTDFLAGS) $(CRT) $< -o $@
 
-build: $(TESTCASES)
+build: $(CRT) $(TESTCASES)
 
 check: $(TESTCASES:test_%.tst=check_%)
 
-check_%: test_%.tst
-	@$(SIM) $(SIMFLAGS) $<
+check_%: test_%.tst $(CRT) $(SYS)
+	$(SIM) $(SIMFLAGS) $<
 
 clean:
-	$(RM) -fr $(TESTCASES) $(CRT) $(HELPER)
+	$(RM) -fr $(TESTCASES) $(CRT)

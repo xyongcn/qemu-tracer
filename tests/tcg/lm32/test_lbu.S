@@ -8,12 +8,10 @@ lbu r3, (r1+0)
 check_r3 0x7e
 
 test_name LBU_2
-load r1 data
 lbu r3, (r1+1)
 check_r3 0x7f
 
 test_name LBU_3
-load r1 data
 lbu r3, (r1+-1)
 check_r3 0x7d
 
@@ -23,12 +21,10 @@ lbu r3, (r1+0)
 check_r3 0xfe
 
 test_name LBU_5
-load r1 data_msb
 lbu r3, (r1+1)
 check_r3 0xff
 
 test_name LBU_6
-load r1 data_msb
 lbu r3, (r1+-1)
 check_r3 0xfd
 

@@ -9,8 +9,7 @@
  * later version. See the COPYING file in the top-level directory.
  */
 #include "cpu.h"
-#include "exec/helper-proto.h"
-#include "exec/cpu_ldst.h"
+#include "helper.h"
 
 #define SIGNBIT (uint32_t)0x80000000
 #define SIGNBIT64 ((uint64_t)1 << 63)
@@ -242,6 +241,22 @@ uint32_t HELPER(ror_cc)(CPUUniCore32State *env, uint32_t x, uint32_t i)
 }
 
 #ifndef CONFIG_USER_ONLY
+#include "exec/softmmu_exec.h"
+
+#define MMUSUFFIX _mmu
+
+#define SHIFT 0
+#include "exec/softmmu_template.h"
+
+#define SHIFT 1
+#include "exec/softmmu_template.h"
+
+#define SHIFT 2
+#include "exec/softmmu_template.h"
+
+#define SHIFT 3
+#include "exec/softmmu_template.h"
+
 void tlb_fill(CPUState *cs, target_ulong addr, int is_write,
               int mmu_idx, uintptr_t retaddr)
 {

@@ -194,12 +194,12 @@ static int xilinx_load_device_tree(hwaddr addr,
     return fdt_size;
 }
 
-static void virtex_init(MachineState *machine)
+static void virtex_init(QEMUMachineInitArgs *args)
 {
-    ram_addr_t ram_size = machine->ram_size;
-    const char *cpu_model = machine->cpu_model;
-    const char *kernel_filename = machine->kernel_filename;
-    const char *kernel_cmdline = machine->kernel_cmdline;
+    ram_addr_t ram_size = args->ram_size;
+    const char *cpu_model = args->cpu_model;
+    const char *kernel_filename = args->kernel_filename;
+    const char *kernel_cmdline = args->kernel_cmdline;
     hwaddr initrd_base = 0;
     int initrd_size = 0;
     MemoryRegion *address_space_mem = get_system_memory();
@@ -222,7 +222,8 @@ static void virtex_init(MachineState *machine)
     env = &cpu->env;
     qemu_register_reset(main_cpu_reset, cpu);
 
-    memory_region_allocate_system_memory(phys_ram, NULL, "ram", ram_size);
+    memory_region_init_ram(phys_ram, NULL, "ram", ram_size);
+    vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(address_space_mem, ram_base, phys_ram);
 
     dinfo = drive_get(IF_PFLASH, 0, 0);
@@ -274,14 +275,14 @@ static void virtex_init(MachineState *machine)
         boot_info.ima_size = kernel_size;
 
         /* Load initrd. */
-        if (machine->initrd_filename) {
+        if (args->initrd_filename) {
             initrd_base = high = ROUND_UP(high, 4);
-            initrd_size = load_image_targphys(machine->initrd_filename,
+            initrd_size = load_image_targphys(args->initrd_filename,
                                               high, ram_size - high);
 
             if (initrd_size < 0) {
                 error_report("couldn't load ram disk '%s'",
-                             machine->initrd_filename);
+                             args->initrd_filename);
                 exit(1);
             }
             high = ROUND_UP(high + initrd_size, 4);

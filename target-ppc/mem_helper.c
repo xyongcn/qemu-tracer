@@ -18,21 +18,15 @@
  */
 #include "cpu.h"
 #include "qemu/host-utils.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 #include "helper_regs.h"
-#include "exec/cpu_ldst.h"
+
+#if !defined(CONFIG_USER_ONLY)
+#include "exec/softmmu_exec.h"
+#endif /* !defined(CONFIG_USER_ONLY) */
 
 //#define DEBUG_OP
-
-static inline bool needs_byteswap(const CPUPPCState *env)
-{
-#if defined(TARGET_WORDS_BIGENDIAN)
-  return msr_le;
-#else
-  return !msr_le;
-#endif
-}
 
 /*****************************************************************************/
 /* Memory load and stores */
@@ -53,7 +47,7 @@ static inline target_ulong addr_add(CPUPPCState *env, target_ulong addr,
 void helper_lmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 {
     for (; reg < 32; reg++) {
-        if (needs_byteswap(env)) {
+        if (msr_le) {
             env->gpr[reg] = bswap32(cpu_ldl_data(env, addr));
         } else {
             env->gpr[reg] = cpu_ldl_data(env, addr);
@@ -65,7 +59,7 @@ void helper_lmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 void helper_stmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 {
     for (; reg < 32; reg++) {
-        if (needs_byteswap(env)) {
+        if (msr_le) {
             cpu_stl_data(env, addr, bswap32((uint32_t)env->gpr[reg]));
         } else {
             cpu_stl_data(env, addr, (uint32_t)env->gpr[reg]);
@@ -208,11 +202,6 @@ target_ulong helper_lscbx(CPUPPCState *env, target_ulong addr, uint32_t reg,
 #define LO_IDX 0
 #endif
 
-/* We use msr_le to determine index ordering in a vector.  However,
-   byteswapping is not simply controlled by msr_le.  We also need to take
-   into account endianness of the target.  This is done for the little-endian
-   PPC64 user-mode target. */
-
 #define LVE(name, access, swap, element)                        \
     void helper_##name(CPUPPCState *env, ppc_avr_t *r,          \
                        target_ulong addr)                       \
@@ -221,11 +210,9 @@ target_ulong helper_lscbx(CPUPPCState *env, target_ulong addr, uint32_t reg,
         int adjust = HI_IDX*(n_elems - 1);                      \
         int sh = sizeof(r->element[0]) >> 1;                    \
         int index = (addr & 0xf) >> sh;                         \
+                                                                \
         if (msr_le) {                                           \
             index = n_elems - index - 1;                        \
-        }                                                       \
-                                                                \
-        if (needs_byteswap(env)) {                              \
             r->element[LO_IDX ? index : (adjust - index)] =     \
                 swap(access(env, addr));                        \
         } else {                                                \
@@ -248,11 +235,9 @@ LVE(lvewx, cpu_ldl_data, bswap32, u32)
         int adjust = HI_IDX * (n_elems - 1);                            \
         int sh = sizeof(r->element[0]) >> 1;                            \
         int index = (addr & 0xf) >> sh;                                 \
+                                                                        \
         if (msr_le) {                                                   \
             index = n_elems - index - 1;                                \
-        }                                                               \
-                                                                        \
-        if (needs_byteswap(env)) {                                      \
             access(env, addr, swap(r->element[LO_IDX ? index :          \
                                               (adjust - index)]));      \
         } else {                                                        \

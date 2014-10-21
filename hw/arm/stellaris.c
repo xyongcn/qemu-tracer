@@ -185,19 +185,12 @@ static uint64_t gptm_read(void *opaque, hwaddr offset,
     case 0x44: /* TBPMR */
         return s->match_prescale[1];
     case 0x48: /* TAR */
-        if (s->config == 1) {
+        if (s->control == 1)
             return s->rtc;
-        }
-        qemu_log_mask(LOG_UNIMP,
-                      "GPTM: read of TAR but timer read not supported");
-        return 0;
     case 0x4c: /* TBR */
-        qemu_log_mask(LOG_UNIMP,
-                      "GPTM: read of TBR but timer read not supported");
-        return 0;
+        hw_error("TODO: Timer value read\n");
     default:
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "GPTM: read at bad offset 0x%x\n", (int)offset);
+        hw_error("gptm_read: Bad offset 0x%x\n", (int)offset);
         return 0;
     }
 }
@@ -293,7 +286,8 @@ static const VMStateDescription vmstate_stellaris_gptm = {
     .name = "stellaris_gptm",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT32(config, gptm_state),
         VMSTATE_UINT32_ARRAY(mode, gptm_state, 2),
         VMSTATE_UINT32(control, gptm_state),
@@ -649,8 +643,9 @@ static const VMStateDescription vmstate_stellaris_sys = {
     .name = "stellaris_sys",
     .version_id = 2,
     .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
     .post_load = stellaris_sys_post_load,
-    .fields = (VMStateField[]) {
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT32(pborctl, ssys_state),
         VMSTATE_UINT32(ldopctl, ssys_state),
         VMSTATE_UINT32(int_mask, ssys_state),
@@ -856,7 +851,8 @@ static const VMStateDescription vmstate_stellaris_i2c = {
     .name = "stellaris_i2c",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT32(msa, stellaris_i2c_state),
         VMSTATE_UINT32(mcs, stellaris_i2c_state),
         VMSTATE_UINT32(mdr, stellaris_i2c_state),
@@ -1125,7 +1121,8 @@ static const VMStateDescription vmstate_stellaris_adc = {
     .name = "stellaris_adc",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT32(actss, stellaris_adc_state),
         VMSTATE_UINT32(ris, stellaris_adc_state),
         VMSTATE_UINT32(im, stellaris_adc_state),
@@ -1290,10 +1287,9 @@ static void stellaris_init(const char *kernel_filename, const char *cpu_model,
 
             sddev = ssi_create_slave(bus, "ssi-sd");
             ssddev = ssi_create_slave(bus, "ssd0323");
-            gpio_out[GPIO_D][0] = qemu_irq_split(
-                    qdev_get_gpio_in_named(sddev, SSI_GPIO_CS, 0),
-                    qdev_get_gpio_in_named(ssddev, SSI_GPIO_CS, 0));
-            gpio_out[GPIO_C][7] = qdev_get_gpio_in(ssddev, 0);
+            gpio_out[GPIO_D][0] = qemu_irq_split(qdev_get_gpio_in(sddev, 0),
+                                                 qdev_get_gpio_in(ssddev, 0));
+            gpio_out[GPIO_C][7] = qdev_get_gpio_in(ssddev, 1);
 
             /* Make sure the select pin is high.  */
             qemu_irq_raise(gpio_out[GPIO_D][0]);
@@ -1334,17 +1330,17 @@ static void stellaris_init(const char *kernel_filename, const char *cpu_model,
 }
 
 /* FIXME: Figure out how to generate these from stellaris_boards.  */
-static void lm3s811evb_init(MachineState *machine)
+static void lm3s811evb_init(QEMUMachineInitArgs *args)
 {
-    const char *cpu_model = machine->cpu_model;
-    const char *kernel_filename = machine->kernel_filename;
+    const char *cpu_model = args->cpu_model;
+    const char *kernel_filename = args->kernel_filename;
     stellaris_init(kernel_filename, cpu_model, &stellaris_boards[0]);
 }
 
-static void lm3s6965evb_init(MachineState *machine)
+static void lm3s6965evb_init(QEMUMachineInitArgs *args)
 {
-    const char *cpu_model = machine->cpu_model;
-    const char *kernel_filename = machine->kernel_filename;
+    const char *cpu_model = args->cpu_model;
+    const char *kernel_filename = args->kernel_filename;
     stellaris_init(kernel_filename, cpu_model, &stellaris_boards[1]);
 }
 

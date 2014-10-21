@@ -208,44 +208,34 @@ static int smbus_device_init(I2CSlave *i2c)
 }
 
 /* Master device commands.  */
-int smbus_quick_command(I2CBus *bus, uint8_t addr, int read)
+void smbus_quick_command(I2CBus *bus, uint8_t addr, int read)
 {
-    if (i2c_start_transfer(bus, addr, read)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, read);
     i2c_end_transfer(bus);
-    return 0;
 }
 
-int smbus_receive_byte(I2CBus *bus, uint8_t addr)
+uint8_t smbus_receive_byte(I2CBus *bus, uint8_t addr)
 {
     uint8_t data;
 
-    if (i2c_start_transfer(bus, addr, 1)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 1);
     data = i2c_recv(bus);
     i2c_nack(bus);
     i2c_end_transfer(bus);
     return data;
 }
 
-int smbus_send_byte(I2CBus *bus, uint8_t addr, uint8_t data)
+void smbus_send_byte(I2CBus *bus, uint8_t addr, uint8_t data)
 {
-    if (i2c_start_transfer(bus, addr, 0)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 0);
     i2c_send(bus, data);
     i2c_end_transfer(bus);
-    return 0;
 }
 
-int smbus_read_byte(I2CBus *bus, uint8_t addr, uint8_t command)
+uint8_t smbus_read_byte(I2CBus *bus, uint8_t addr, uint8_t command)
 {
     uint8_t data;
-    if (i2c_start_transfer(bus, addr, 0)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 0);
     i2c_send(bus, command);
     i2c_start_transfer(bus, addr, 1);
     data = i2c_recv(bus);
@@ -254,23 +244,18 @@ int smbus_read_byte(I2CBus *bus, uint8_t addr, uint8_t command)
     return data;
 }
 
-int smbus_write_byte(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t data)
+void smbus_write_byte(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t data)
 {
-    if (i2c_start_transfer(bus, addr, 0)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 0);
     i2c_send(bus, command);
     i2c_send(bus, data);
     i2c_end_transfer(bus);
-    return 0;
 }
 
-int smbus_read_word(I2CBus *bus, uint8_t addr, uint8_t command)
+uint16_t smbus_read_word(I2CBus *bus, uint8_t addr, uint8_t command)
 {
     uint16_t data;
-    if (i2c_start_transfer(bus, addr, 0)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 0);
     i2c_send(bus, command);
     i2c_start_transfer(bus, addr, 1);
     data = i2c_recv(bus);
@@ -280,16 +265,13 @@ int smbus_read_word(I2CBus *bus, uint8_t addr, uint8_t command)
     return data;
 }
 
-int smbus_write_word(I2CBus *bus, uint8_t addr, uint8_t command, uint16_t data)
+void smbus_write_word(I2CBus *bus, uint8_t addr, uint8_t command, uint16_t data)
 {
-    if (i2c_start_transfer(bus, addr, 0)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 0);
     i2c_send(bus, command);
     i2c_send(bus, data & 0xff);
     i2c_send(bus, data >> 8);
     i2c_end_transfer(bus);
-    return 0;
 }
 
 int smbus_read_block(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t *data)
@@ -297,41 +279,33 @@ int smbus_read_block(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t *data)
     int len;
     int i;
 
-    if (i2c_start_transfer(bus, addr, 0)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 0);
     i2c_send(bus, command);
     i2c_start_transfer(bus, addr, 1);
     len = i2c_recv(bus);
-    if (len > 32) {
+    if (len > 32)
         len = 0;
-    }
-    for (i = 0; i < len; i++) {
+    for (i = 0; i < len; i++)
         data[i] = i2c_recv(bus);
-    }
     i2c_nack(bus);
     i2c_end_transfer(bus);
     return len;
 }
 
-int smbus_write_block(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t *data,
-                      int len)
+void smbus_write_block(I2CBus *bus, uint8_t addr, uint8_t command, uint8_t *data,
+                       int len)
 {
     int i;
 
     if (len > 32)
         len = 32;
 
-    if (i2c_start_transfer(bus, addr, 0)) {
-        return -1;
-    }
+    i2c_start_transfer(bus, addr, 0);
     i2c_send(bus, command);
     i2c_send(bus, len);
-    for (i = 0; i < len; i++) {
+    for (i = 0; i < len; i++)
         i2c_send(bus, data[i]);
-    }
     i2c_end_transfer(bus);
-    return 0;
 }
 
 static void smbus_device_class_init(ObjectClass *klass, void *data)

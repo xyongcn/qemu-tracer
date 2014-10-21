@@ -36,9 +36,9 @@
 #define ELF_MACHINE_UNAME "Unknown"
 #endif
 
-uint16_t cpu_to_dump16(DumpState *s, uint16_t val)
+static uint16_t cpu_convert_to_target16(uint16_t val, int endian)
 {
-    if (s->dump_info.d_endian == ELFDATA2LSB) {
+    if (endian == ELFDATA2LSB) {
         val = cpu_to_le16(val);
     } else {
         val = cpu_to_be16(val);
@@ -47,9 +47,9 @@ uint16_t cpu_to_dump16(DumpState *s, uint16_t val)
     return val;
 }
 
-uint32_t cpu_to_dump32(DumpState *s, uint32_t val)
+static uint32_t cpu_convert_to_target32(uint32_t val, int endian)
 {
-    if (s->dump_info.d_endian == ELFDATA2LSB) {
+    if (endian == ELFDATA2LSB) {
         val = cpu_to_le32(val);
     } else {
         val = cpu_to_be32(val);
@@ -58,9 +58,9 @@ uint32_t cpu_to_dump32(DumpState *s, uint32_t val)
     return val;
 }
 
-uint64_t cpu_to_dump64(DumpState *s, uint64_t val)
+static uint64_t cpu_convert_to_target64(uint64_t val, int endian)
 {
-    if (s->dump_info.d_endian == ELFDATA2LSB) {
+    if (endian == ELFDATA2LSB) {
         val = cpu_to_le64(val);
     } else {
         val = cpu_to_be64(val);
@@ -68,6 +68,39 @@ uint64_t cpu_to_dump64(DumpState *s, uint64_t val)
 
     return val;
 }
+
+typedef struct DumpState {
+    GuestPhysBlockList guest_phys_blocks;
+    ArchDumpInfo dump_info;
+    MemoryMappingList list;
+    uint16_t phdr_num;
+    uint32_t sh_info;
+    bool have_section;
+    bool resume;
+    ssize_t note_size;
+    hwaddr memory_offset;
+    int fd;
+
+    GuestPhysBlock *next_block;
+    ram_addr_t start;
+    bool has_filter;
+    int64_t begin;
+    int64_t length;
+    Error **errp;
+
+    uint8_t *note_buf;          /* buffer for notes */
+    size_t note_buf_offset;     /* the writing place in note_buf */
+    uint32_t nr_cpus;           /* number of guest's cpu */
+    size_t page_size;           /* guest's page size */
+    uint32_t page_shift;        /* guest's page shift */
+    uint64_t max_mapnr;         /* the biggest guest's phys-mem's number */
+    size_t len_dump_bitmap;     /* the size of the place used to store
+                                   dump_bitmap in vmcore */
+    off_t offset_dump_bitmap;   /* offset of dump_bitmap part in vmcore */
+    off_t offset_page;          /* offset of page part in vmcore */
+    size_t num_dumpable;        /* number of page that can be dumped */
+    uint32_t flag_compress;     /* indicate the compression format */
+} DumpState;
 
 static int dump_cleanup(DumpState *s)
 {
@@ -107,25 +140,29 @@ static int write_elf64_header(DumpState *s)
 {
     Elf64_Ehdr elf_header;
     int ret;
+    int endian = s->dump_info.d_endian;
 
     memset(&elf_header, 0, sizeof(Elf64_Ehdr));
     memcpy(&elf_header, ELFMAG, SELFMAG);
     elf_header.e_ident[EI_CLASS] = ELFCLASS64;
     elf_header.e_ident[EI_DATA] = s->dump_info.d_endian;
     elf_header.e_ident[EI_VERSION] = EV_CURRENT;
-    elf_header.e_type = cpu_to_dump16(s, ET_CORE);
-    elf_header.e_machine = cpu_to_dump16(s, s->dump_info.d_machine);
-    elf_header.e_version = cpu_to_dump32(s, EV_CURRENT);
-    elf_header.e_ehsize = cpu_to_dump16(s, sizeof(elf_header));
-    elf_header.e_phoff = cpu_to_dump64(s, sizeof(Elf64_Ehdr));
-    elf_header.e_phentsize = cpu_to_dump16(s, sizeof(Elf64_Phdr));
-    elf_header.e_phnum = cpu_to_dump16(s, s->phdr_num);
+    elf_header.e_type = cpu_convert_to_target16(ET_CORE, endian);
+    elf_header.e_machine = cpu_convert_to_target16(s->dump_info.d_machine,
+                                                   endian);
+    elf_header.e_version = cpu_convert_to_target32(EV_CURRENT, endian);
+    elf_header.e_ehsize = cpu_convert_to_target16(sizeof(elf_header), endian);
+    elf_header.e_phoff = cpu_convert_to_target64(sizeof(Elf64_Ehdr), endian);
+    elf_header.e_phentsize = cpu_convert_to_target16(sizeof(Elf64_Phdr),
+                                                     endian);
+    elf_header.e_phnum = cpu_convert_to_target16(s->phdr_num, endian);
     if (s->have_section) {
         uint64_t shoff = sizeof(Elf64_Ehdr) + sizeof(Elf64_Phdr) * s->sh_info;
 
-        elf_header.e_shoff = cpu_to_dump64(s, shoff);
-        elf_header.e_shentsize = cpu_to_dump16(s, sizeof(Elf64_Shdr));
-        elf_header.e_shnum = cpu_to_dump16(s, 1);
+        elf_header.e_shoff = cpu_convert_to_target64(shoff, endian);
+        elf_header.e_shentsize = cpu_convert_to_target16(sizeof(Elf64_Shdr),
+                                                         endian);
+        elf_header.e_shnum = cpu_convert_to_target16(1, endian);
     }
 
     ret = fd_write_vmcore(&elf_header, sizeof(elf_header), s);
@@ -141,25 +178,29 @@ static int write_elf32_header(DumpState *s)
 {
     Elf32_Ehdr elf_header;
     int ret;
+    int endian = s->dump_info.d_endian;
 
     memset(&elf_header, 0, sizeof(Elf32_Ehdr));
     memcpy(&elf_header, ELFMAG, SELFMAG);
     elf_header.e_ident[EI_CLASS] = ELFCLASS32;
-    elf_header.e_ident[EI_DATA] = s->dump_info.d_endian;
+    elf_header.e_ident[EI_DATA] = endian;
     elf_header.e_ident[EI_VERSION] = EV_CURRENT;
-    elf_header.e_type = cpu_to_dump16(s, ET_CORE);
-    elf_header.e_machine = cpu_to_dump16(s, s->dump_info.d_machine);
-    elf_header.e_version = cpu_to_dump32(s, EV_CURRENT);
-    elf_header.e_ehsize = cpu_to_dump16(s, sizeof(elf_header));
-    elf_header.e_phoff = cpu_to_dump32(s, sizeof(Elf32_Ehdr));
-    elf_header.e_phentsize = cpu_to_dump16(s, sizeof(Elf32_Phdr));
-    elf_header.e_phnum = cpu_to_dump16(s, s->phdr_num);
+    elf_header.e_type = cpu_convert_to_target16(ET_CORE, endian);
+    elf_header.e_machine = cpu_convert_to_target16(s->dump_info.d_machine,
+                                                   endian);
+    elf_header.e_version = cpu_convert_to_target32(EV_CURRENT, endian);
+    elf_header.e_ehsize = cpu_convert_to_target16(sizeof(elf_header), endian);
+    elf_header.e_phoff = cpu_convert_to_target32(sizeof(Elf32_Ehdr), endian);
+    elf_header.e_phentsize = cpu_convert_to_target16(sizeof(Elf32_Phdr),
+                                                     endian);
+    elf_header.e_phnum = cpu_convert_to_target16(s->phdr_num, endian);
     if (s->have_section) {
         uint32_t shoff = sizeof(Elf32_Ehdr) + sizeof(Elf32_Phdr) * s->sh_info;
 
-        elf_header.e_shoff = cpu_to_dump32(s, shoff);
-        elf_header.e_shentsize = cpu_to_dump16(s, sizeof(Elf32_Shdr));
-        elf_header.e_shnum = cpu_to_dump16(s, 1);
+        elf_header.e_shoff = cpu_convert_to_target32(shoff, endian);
+        elf_header.e_shentsize = cpu_convert_to_target16(sizeof(Elf32_Shdr),
+                                                         endian);
+        elf_header.e_shnum = cpu_convert_to_target16(1, endian);
     }
 
     ret = fd_write_vmcore(&elf_header, sizeof(elf_header), s);
@@ -177,14 +218,15 @@ static int write_elf64_load(DumpState *s, MemoryMapping *memory_mapping,
 {
     Elf64_Phdr phdr;
     int ret;
+    int endian = s->dump_info.d_endian;
 
     memset(&phdr, 0, sizeof(Elf64_Phdr));
-    phdr.p_type = cpu_to_dump32(s, PT_LOAD);
-    phdr.p_offset = cpu_to_dump64(s, offset);
-    phdr.p_paddr = cpu_to_dump64(s, memory_mapping->phys_addr);
-    phdr.p_filesz = cpu_to_dump64(s, filesz);
-    phdr.p_memsz = cpu_to_dump64(s, memory_mapping->length);
-    phdr.p_vaddr = cpu_to_dump64(s, memory_mapping->virt_addr);
+    phdr.p_type = cpu_convert_to_target32(PT_LOAD, endian);
+    phdr.p_offset = cpu_convert_to_target64(offset, endian);
+    phdr.p_paddr = cpu_convert_to_target64(memory_mapping->phys_addr, endian);
+    phdr.p_filesz = cpu_convert_to_target64(filesz, endian);
+    phdr.p_memsz = cpu_convert_to_target64(memory_mapping->length, endian);
+    phdr.p_vaddr = cpu_convert_to_target64(memory_mapping->virt_addr, endian);
 
     assert(memory_mapping->length >= filesz);
 
@@ -203,14 +245,15 @@ static int write_elf32_load(DumpState *s, MemoryMapping *memory_mapping,
 {
     Elf32_Phdr phdr;
     int ret;
+    int endian = s->dump_info.d_endian;
 
     memset(&phdr, 0, sizeof(Elf32_Phdr));
-    phdr.p_type = cpu_to_dump32(s, PT_LOAD);
-    phdr.p_offset = cpu_to_dump32(s, offset);
-    phdr.p_paddr = cpu_to_dump32(s, memory_mapping->phys_addr);
-    phdr.p_filesz = cpu_to_dump32(s, filesz);
-    phdr.p_memsz = cpu_to_dump32(s, memory_mapping->length);
-    phdr.p_vaddr = cpu_to_dump32(s, memory_mapping->virt_addr);
+    phdr.p_type = cpu_convert_to_target32(PT_LOAD, endian);
+    phdr.p_offset = cpu_convert_to_target32(offset, endian);
+    phdr.p_paddr = cpu_convert_to_target32(memory_mapping->phys_addr, endian);
+    phdr.p_filesz = cpu_convert_to_target32(filesz, endian);
+    phdr.p_memsz = cpu_convert_to_target32(memory_mapping->length, endian);
+    phdr.p_vaddr = cpu_convert_to_target32(memory_mapping->virt_addr, endian);
 
     assert(memory_mapping->length >= filesz);
 
@@ -226,15 +269,16 @@ static int write_elf32_load(DumpState *s, MemoryMapping *memory_mapping,
 static int write_elf64_note(DumpState *s)
 {
     Elf64_Phdr phdr;
+    int endian = s->dump_info.d_endian;
     hwaddr begin = s->memory_offset - s->note_size;
     int ret;
 
     memset(&phdr, 0, sizeof(Elf64_Phdr));
-    phdr.p_type = cpu_to_dump32(s, PT_NOTE);
-    phdr.p_offset = cpu_to_dump64(s, begin);
+    phdr.p_type = cpu_convert_to_target32(PT_NOTE, endian);
+    phdr.p_offset = cpu_convert_to_target64(begin, endian);
     phdr.p_paddr = 0;
-    phdr.p_filesz = cpu_to_dump64(s, s->note_size);
-    phdr.p_memsz = cpu_to_dump64(s, s->note_size);
+    phdr.p_filesz = cpu_convert_to_target64(s->note_size, endian);
+    phdr.p_memsz = cpu_convert_to_target64(s->note_size, endian);
     phdr.p_vaddr = 0;
 
     ret = fd_write_vmcore(&phdr, sizeof(Elf64_Phdr), s);
@@ -281,14 +325,15 @@ static int write_elf32_note(DumpState *s)
 {
     hwaddr begin = s->memory_offset - s->note_size;
     Elf32_Phdr phdr;
+    int endian = s->dump_info.d_endian;
     int ret;
 
     memset(&phdr, 0, sizeof(Elf32_Phdr));
-    phdr.p_type = cpu_to_dump32(s, PT_NOTE);
-    phdr.p_offset = cpu_to_dump32(s, begin);
+    phdr.p_type = cpu_convert_to_target32(PT_NOTE, endian);
+    phdr.p_offset = cpu_convert_to_target32(begin, endian);
     phdr.p_paddr = 0;
-    phdr.p_filesz = cpu_to_dump32(s, s->note_size);
-    phdr.p_memsz = cpu_to_dump32(s, s->note_size);
+    phdr.p_filesz = cpu_convert_to_target32(s->note_size, endian);
+    phdr.p_memsz = cpu_convert_to_target32(s->note_size, endian);
     phdr.p_vaddr = 0;
 
     ret = fd_write_vmcore(&phdr, sizeof(Elf32_Phdr), s);
@@ -330,6 +375,7 @@ static int write_elf_section(DumpState *s, int type)
 {
     Elf32_Shdr shdr32;
     Elf64_Shdr shdr64;
+    int endian = s->dump_info.d_endian;
     int shdr_size;
     void *shdr;
     int ret;
@@ -337,12 +383,12 @@ static int write_elf_section(DumpState *s, int type)
     if (type == 0) {
         shdr_size = sizeof(Elf32_Shdr);
         memset(&shdr32, 0, shdr_size);
-        shdr32.sh_info = cpu_to_dump32(s, s->sh_info);
+        shdr32.sh_info = cpu_convert_to_target32(s->sh_info, endian);
         shdr = &shdr32;
     } else {
         shdr_size = sizeof(Elf64_Shdr);
         memset(&shdr64, 0, shdr_size);
-        shdr64.sh_info = cpu_to_dump32(s, s->sh_info);
+        shdr64.sh_info = cpu_convert_to_target32(s->sh_info, endian);
         shdr = &shdr64;
     }
 
@@ -666,25 +712,27 @@ static int create_vmcore(DumpState *s)
 
 static int write_start_flat_header(int fd)
 {
-    MakedumpfileHeader *mh;
+    uint8_t *buf;
+    MakedumpfileHeader mh;
     int ret = 0;
 
-    QEMU_BUILD_BUG_ON(sizeof *mh > MAX_SIZE_MDF_HEADER);
-    mh = g_malloc0(MAX_SIZE_MDF_HEADER);
+    memset(&mh, 0, sizeof(mh));
+    strncpy(mh.signature, MAKEDUMPFILE_SIGNATURE,
+            strlen(MAKEDUMPFILE_SIGNATURE));
 
-    memcpy(mh->signature, MAKEDUMPFILE_SIGNATURE,
-           MIN(sizeof mh->signature, sizeof MAKEDUMPFILE_SIGNATURE));
+    mh.type = cpu_to_be64(TYPE_FLAT_HEADER);
+    mh.version = cpu_to_be64(VERSION_FLAT_HEADER);
 
-    mh->type = cpu_to_be64(TYPE_FLAT_HEADER);
-    mh->version = cpu_to_be64(VERSION_FLAT_HEADER);
+    buf = g_malloc0(MAX_SIZE_MDF_HEADER);
+    memcpy(buf, &mh, sizeof(mh));
 
     size_t written_size;
-    written_size = qemu_write_full(fd, mh, MAX_SIZE_MDF_HEADER);
+    written_size = qemu_write_full(fd, buf, MAX_SIZE_MDF_HEADER);
     if (written_size != MAX_SIZE_MDF_HEADER) {
         ret = -1;
     }
 
-    g_free(mh);
+    g_free(buf);
     return ret;
 }
 
@@ -748,6 +796,7 @@ static int create_header32(DumpState *s)
     DiskDumpHeader32 *dh = NULL;
     KdumpSubHeader32 *kh = NULL;
     size_t size;
+    int endian = s->dump_info.d_endian;
     uint32_t block_size;
     uint32_t sub_hdr_size;
     uint32_t bitmap_blocks;
@@ -759,17 +808,18 @@ static int create_header32(DumpState *s)
     dh = g_malloc0(size);
 
     strncpy(dh->signature, KDUMP_SIGNATURE, strlen(KDUMP_SIGNATURE));
-    dh->header_version = cpu_to_dump32(s, 6);
-    block_size = TARGET_PAGE_SIZE;
-    dh->block_size = cpu_to_dump32(s, block_size);
+    dh->header_version = cpu_convert_to_target32(6, endian);
+    block_size = s->page_size;
+    dh->block_size = cpu_convert_to_target32(block_size, endian);
     sub_hdr_size = sizeof(struct KdumpSubHeader32) + s->note_size;
     sub_hdr_size = DIV_ROUND_UP(sub_hdr_size, block_size);
-    dh->sub_hdr_size = cpu_to_dump32(s, sub_hdr_size);
+    dh->sub_hdr_size = cpu_convert_to_target32(sub_hdr_size, endian);
     /* dh->max_mapnr may be truncated, full 64bit is in kh.max_mapnr_64 */
-    dh->max_mapnr = cpu_to_dump32(s, MIN(s->max_mapnr, UINT_MAX));
-    dh->nr_cpus = cpu_to_dump32(s, s->nr_cpus);
+    dh->max_mapnr = cpu_convert_to_target32(MIN(s->max_mapnr, UINT_MAX),
+                                            endian);
+    dh->nr_cpus = cpu_convert_to_target32(s->nr_cpus, endian);
     bitmap_blocks = DIV_ROUND_UP(s->len_dump_bitmap, block_size) * 2;
-    dh->bitmap_blocks = cpu_to_dump32(s, bitmap_blocks);
+    dh->bitmap_blocks = cpu_convert_to_target32(bitmap_blocks, endian);
     strncpy(dh->utsname.machine, ELF_MACHINE_UNAME, sizeof(dh->utsname.machine));
 
     if (s->flag_compress & DUMP_DH_COMPRESSED_ZLIB) {
@@ -785,7 +835,7 @@ static int create_header32(DumpState *s)
         status |= DUMP_DH_COMPRESSED_SNAPPY;
     }
 #endif
-    dh->status = cpu_to_dump32(s, status);
+    dh->status = cpu_convert_to_target32(status, endian);
 
     if (write_buffer(s->fd, 0, dh, size) < 0) {
         dump_error(s, "dump: failed to write disk dump header.\n");
@@ -798,13 +848,13 @@ static int create_header32(DumpState *s)
     kh = g_malloc0(size);
 
     /* 64bit max_mapnr_64 */
-    kh->max_mapnr_64 = cpu_to_dump64(s, s->max_mapnr);
-    kh->phys_base = cpu_to_dump32(s, PHYS_BASE);
-    kh->dump_level = cpu_to_dump32(s, DUMP_LEVEL);
+    kh->max_mapnr_64 = cpu_convert_to_target64(s->max_mapnr, endian);
+    kh->phys_base = cpu_convert_to_target32(PHYS_BASE, endian);
+    kh->dump_level = cpu_convert_to_target32(DUMP_LEVEL, endian);
 
     offset_note = DISKDUMP_HEADER_BLOCKS * block_size + size;
-    kh->offset_note = cpu_to_dump64(s, offset_note);
-    kh->note_size = cpu_to_dump32(s, s->note_size);
+    kh->offset_note = cpu_convert_to_target64(offset_note, endian);
+    kh->note_size = cpu_convert_to_target32(s->note_size, endian);
 
     if (write_buffer(s->fd, DISKDUMP_HEADER_BLOCKS *
                      block_size, kh, size) < 0) {
@@ -853,6 +903,7 @@ static int create_header64(DumpState *s)
     DiskDumpHeader64 *dh = NULL;
     KdumpSubHeader64 *kh = NULL;
     size_t size;
+    int endian = s->dump_info.d_endian;
     uint32_t block_size;
     uint32_t sub_hdr_size;
     uint32_t bitmap_blocks;
@@ -864,17 +915,18 @@ static int create_header64(DumpState *s)
     dh = g_malloc0(size);
 
     strncpy(dh->signature, KDUMP_SIGNATURE, strlen(KDUMP_SIGNATURE));
-    dh->header_version = cpu_to_dump32(s, 6);
-    block_size = TARGET_PAGE_SIZE;
-    dh->block_size = cpu_to_dump32(s, block_size);
+    dh->header_version = cpu_convert_to_target32(6, endian);
+    block_size = s->page_size;
+    dh->block_size = cpu_convert_to_target32(block_size, endian);
     sub_hdr_size = sizeof(struct KdumpSubHeader64) + s->note_size;
     sub_hdr_size = DIV_ROUND_UP(sub_hdr_size, block_size);
-    dh->sub_hdr_size = cpu_to_dump32(s, sub_hdr_size);
+    dh->sub_hdr_size = cpu_convert_to_target32(sub_hdr_size, endian);
     /* dh->max_mapnr may be truncated, full 64bit is in kh.max_mapnr_64 */
-    dh->max_mapnr = cpu_to_dump32(s, MIN(s->max_mapnr, UINT_MAX));
-    dh->nr_cpus = cpu_to_dump32(s, s->nr_cpus);
+    dh->max_mapnr = cpu_convert_to_target32(MIN(s->max_mapnr, UINT_MAX),
+                                            endian);
+    dh->nr_cpus = cpu_convert_to_target32(s->nr_cpus, endian);
     bitmap_blocks = DIV_ROUND_UP(s->len_dump_bitmap, block_size) * 2;
-    dh->bitmap_blocks = cpu_to_dump32(s, bitmap_blocks);
+    dh->bitmap_blocks = cpu_convert_to_target32(bitmap_blocks, endian);
     strncpy(dh->utsname.machine, ELF_MACHINE_UNAME, sizeof(dh->utsname.machine));
 
     if (s->flag_compress & DUMP_DH_COMPRESSED_ZLIB) {
@@ -890,7 +942,7 @@ static int create_header64(DumpState *s)
         status |= DUMP_DH_COMPRESSED_SNAPPY;
     }
 #endif
-    dh->status = cpu_to_dump32(s, status);
+    dh->status = cpu_convert_to_target32(status, endian);
 
     if (write_buffer(s->fd, 0, dh, size) < 0) {
         dump_error(s, "dump: failed to write disk dump header.\n");
@@ -903,13 +955,13 @@ static int create_header64(DumpState *s)
     kh = g_malloc0(size);
 
     /* 64bit max_mapnr_64 */
-    kh->max_mapnr_64 = cpu_to_dump64(s, s->max_mapnr);
-    kh->phys_base = cpu_to_dump64(s, PHYS_BASE);
-    kh->dump_level = cpu_to_dump32(s, DUMP_LEVEL);
+    kh->max_mapnr_64 = cpu_convert_to_target64(s->max_mapnr, endian);
+    kh->phys_base = cpu_convert_to_target64(PHYS_BASE, endian);
+    kh->dump_level = cpu_convert_to_target32(DUMP_LEVEL, endian);
 
     offset_note = DISKDUMP_HEADER_BLOCKS * block_size + size;
-    kh->offset_note = cpu_to_dump64(s, offset_note);
-    kh->note_size = cpu_to_dump64(s, s->note_size);
+    kh->offset_note = cpu_convert_to_target64(offset_note, endian);
+    kh->note_size = cpu_convert_to_target64(s->note_size, endian);
 
     if (write_buffer(s->fd, DISKDUMP_HEADER_BLOCKS *
                      block_size, kh, size) < 0) {
@@ -953,7 +1005,7 @@ out:
 
 static int write_dump_header(DumpState *s)
 {
-    if (s->dump_info.d_class == ELFCLASS32) {
+    if (s->dump_info.d_machine == EM_386) {
         return create_header32(s);
     } else {
         return create_header64(s);
@@ -1035,9 +1087,9 @@ static bool get_next_page(GuestPhysBlock **blockptr, uint64_t *pfnptr,
     if (!block) {
         block = QTAILQ_FIRST(&s->guest_phys_blocks.head);
         *blockptr = block;
-        assert((block->target_start & ~TARGET_PAGE_MASK) == 0);
-        assert((block->target_end & ~TARGET_PAGE_MASK) == 0);
-        *pfnptr = paddr_to_pfn(block->target_start);
+        assert(block->target_start % s->page_size == 0);
+        assert(block->target_end % s->page_size == 0);
+        *pfnptr = paddr_to_pfn(block->target_start, s->page_shift);
         if (bufptr) {
             *bufptr = block->host_addr;
         }
@@ -1045,10 +1097,10 @@ static bool get_next_page(GuestPhysBlock **blockptr, uint64_t *pfnptr,
     }
 
     *pfnptr = *pfnptr + 1;
-    addr = pfn_to_paddr(*pfnptr);
+    addr = pfn_to_paddr(*pfnptr, s->page_shift);
 
     if ((addr >= block->target_start) &&
-        (addr + TARGET_PAGE_SIZE <= block->target_end)) {
+        (addr + s->page_size <= block->target_end)) {
         buf = block->host_addr + (addr - block->target_start);
     } else {
         /* the next page is in the next block */
@@ -1057,9 +1109,9 @@ static bool get_next_page(GuestPhysBlock **blockptr, uint64_t *pfnptr,
         if (!block) {
             return false;
         }
-        assert((block->target_start & ~TARGET_PAGE_MASK) == 0);
-        assert((block->target_end & ~TARGET_PAGE_MASK) == 0);
-        *pfnptr = paddr_to_pfn(block->target_start);
+        assert(block->target_start % s->page_size == 0);
+        assert(block->target_end % s->page_size == 0);
+        *pfnptr = paddr_to_pfn(block->target_start, s->page_shift);
         buf = block->host_addr;
     }
 
@@ -1173,24 +1225,42 @@ static void free_data_cache(DataCache *data_cache)
 
 static size_t get_len_buf_out(size_t page_size, uint32_t flag_compress)
 {
-    switch (flag_compress) {
-    case DUMP_DH_COMPRESSED_ZLIB:
-        return compressBound(page_size);
+    size_t len_buf_out_zlib, len_buf_out_lzo, len_buf_out_snappy;
+    size_t len_buf_out;
 
-    case DUMP_DH_COMPRESSED_LZO:
-        /*
-         * LZO will expand incompressible data by a little amount. Please check
-         * the following URL to see the expansion calculation:
-         * http://www.oberhumer.com/opensource/lzo/lzofaq.php
-         */
-        return page_size + page_size / 16 + 64 + 3;
+    /* init buf_out */
+    len_buf_out_zlib = len_buf_out_lzo = len_buf_out_snappy = 0;
+
+    /* buf size for zlib */
+    len_buf_out_zlib = compressBound(page_size);
+
+    /* buf size for lzo */
+#ifdef CONFIG_LZO
+    if (flag_compress & DUMP_DH_COMPRESSED_LZO) {
+        if (lzo_init() != LZO_E_OK) {
+            /* return 0 to indicate lzo is unavailable */
+            return 0;
+        }
+    }
+
+    /*
+     * LZO will expand incompressible data by a little amount. please check the
+     * following URL to see the expansion calculation:
+     * http://www.oberhumer.com/opensource/lzo/lzofaq.php
+     */
+    len_buf_out_lzo = page_size + page_size / 16 + 64 + 3;
+#endif
 
 #ifdef CONFIG_SNAPPY
-    case DUMP_DH_COMPRESSED_SNAPPY:
-        return snappy_max_compressed_length(page_size);
+    /* buf size for snappy */
+    len_buf_out_snappy = snappy_max_compressed_length(page_size);
 #endif
-    }
-    return 0;
+
+    /* get the biggest that can store all kinds of compressed page */
+    len_buf_out = MAX(len_buf_out_zlib,
+                      MAX(len_buf_out_lzo, len_buf_out_snappy));
+
+    return len_buf_out;
 }
 
 /*
@@ -1213,6 +1283,7 @@ static int write_dump_pages(DumpState *s)
     off_t offset_desc, offset_data;
     PageDescriptor pd, pd_zero;
     uint8_t *buf;
+    int endian = s->dump_info.d_endian;
     GuestPhysBlock *block_iter = NULL;
     uint64_t pfn_iter;
 
@@ -1224,8 +1295,11 @@ static int write_dump_pages(DumpState *s)
     prepare_data_cache(&page_data, s, offset_data);
 
     /* prepare buffer to store compressed data */
-    len_buf_out = get_len_buf_out(TARGET_PAGE_SIZE, s->flag_compress);
-    assert(len_buf_out != 0);
+    len_buf_out = get_len_buf_out(s->page_size, s->flag_compress);
+    if (len_buf_out == 0) {
+        dump_error(s, "dump: failed to get length of output buffer.\n");
+        goto out;
+    }
 
 #ifdef CONFIG_LZO
     wrkmem = g_malloc(LZO1X_1_MEM_COMPRESS);
@@ -1237,19 +1311,19 @@ static int write_dump_pages(DumpState *s)
      * init zero page's page_desc and page_data, because every zero page
      * uses the same page_data
      */
-    pd_zero.size = cpu_to_dump32(s, TARGET_PAGE_SIZE);
-    pd_zero.flags = cpu_to_dump32(s, 0);
-    pd_zero.offset = cpu_to_dump64(s, offset_data);
-    pd_zero.page_flags = cpu_to_dump64(s, 0);
-    buf = g_malloc0(TARGET_PAGE_SIZE);
-    ret = write_cache(&page_data, buf, TARGET_PAGE_SIZE, false);
+    pd_zero.size = cpu_convert_to_target32(s->page_size, endian);
+    pd_zero.flags = cpu_convert_to_target32(0, endian);
+    pd_zero.offset = cpu_convert_to_target64(offset_data, endian);
+    pd_zero.page_flags = cpu_convert_to_target64(0, endian);
+    buf = g_malloc0(s->page_size);
+    ret = write_cache(&page_data, buf, s->page_size, false);
     g_free(buf);
     if (ret < 0) {
         dump_error(s, "dump: failed to write page data(zero page).\n");
         goto out;
     }
 
-    offset_data += TARGET_PAGE_SIZE;
+    offset_data += s->page_size;
 
     /*
      * dump memory to vmcore page by page. zero page will all be resided in the
@@ -1257,7 +1331,7 @@ static int write_dump_pages(DumpState *s)
      */
     while (get_next_page(&block_iter, &pfn_iter, &buf, s)) {
         /* check zero page */
-        if (is_zero_page(buf, TARGET_PAGE_SIZE)) {
+        if (is_zero_page(buf, s->page_size)) {
             ret = write_cache(&page_desc, &pd_zero, sizeof(PageDescriptor),
                               false);
             if (ret < 0) {
@@ -1278,11 +1352,11 @@ static int write_dump_pages(DumpState *s)
              */
              size_out = len_buf_out;
              if ((s->flag_compress & DUMP_DH_COMPRESSED_ZLIB) &&
-                    (compress2(buf_out, (uLongf *)&size_out, buf,
-                               TARGET_PAGE_SIZE, Z_BEST_SPEED) == Z_OK) &&
-                    (size_out < TARGET_PAGE_SIZE)) {
-                pd.flags = cpu_to_dump32(s, DUMP_DH_COMPRESSED_ZLIB);
-                pd.size  = cpu_to_dump32(s, size_out);
+                    (compress2(buf_out, (uLongf *)&size_out, buf, s->page_size,
+                    Z_BEST_SPEED) == Z_OK) && (size_out < s->page_size)) {
+                pd.flags = cpu_convert_to_target32(DUMP_DH_COMPRESSED_ZLIB,
+                                                   endian);
+                pd.size  = cpu_convert_to_target32(size_out, endian);
 
                 ret = write_cache(&page_data, buf_out, size_out, false);
                 if (ret < 0) {
@@ -1291,11 +1365,12 @@ static int write_dump_pages(DumpState *s)
                 }
 #ifdef CONFIG_LZO
             } else if ((s->flag_compress & DUMP_DH_COMPRESSED_LZO) &&
-                    (lzo1x_1_compress(buf, TARGET_PAGE_SIZE, buf_out,
+                    (lzo1x_1_compress(buf, s->page_size, buf_out,
                     (lzo_uint *)&size_out, wrkmem) == LZO_E_OK) &&
-                    (size_out < TARGET_PAGE_SIZE)) {
-                pd.flags = cpu_to_dump32(s, DUMP_DH_COMPRESSED_LZO);
-                pd.size  = cpu_to_dump32(s, size_out);
+                    (size_out < s->page_size)) {
+                pd.flags = cpu_convert_to_target32(DUMP_DH_COMPRESSED_LZO,
+                                                   endian);
+                pd.size  = cpu_convert_to_target32(size_out, endian);
 
                 ret = write_cache(&page_data, buf_out, size_out, false);
                 if (ret < 0) {
@@ -1305,11 +1380,12 @@ static int write_dump_pages(DumpState *s)
 #endif
 #ifdef CONFIG_SNAPPY
             } else if ((s->flag_compress & DUMP_DH_COMPRESSED_SNAPPY) &&
-                    (snappy_compress((char *)buf, TARGET_PAGE_SIZE,
+                    (snappy_compress((char *)buf, s->page_size,
                     (char *)buf_out, &size_out) == SNAPPY_OK) &&
-                    (size_out < TARGET_PAGE_SIZE)) {
-                pd.flags = cpu_to_dump32(s, DUMP_DH_COMPRESSED_SNAPPY);
-                pd.size  = cpu_to_dump32(s, size_out);
+                    (size_out < s->page_size)) {
+                pd.flags = cpu_convert_to_target32(
+                                        DUMP_DH_COMPRESSED_SNAPPY, endian);
+                pd.size  = cpu_convert_to_target32(size_out, endian);
 
                 ret = write_cache(&page_data, buf_out, size_out, false);
                 if (ret < 0) {
@@ -1320,13 +1396,13 @@ static int write_dump_pages(DumpState *s)
             } else {
                 /*
                  * fall back to save in plaintext, size_out should be
-                 * assigned TARGET_PAGE_SIZE
+                 * assigned to s->page_size
                  */
-                pd.flags = cpu_to_dump32(s, 0);
-                size_out = TARGET_PAGE_SIZE;
-                pd.size = cpu_to_dump32(s, size_out);
+                pd.flags = cpu_convert_to_target32(0, endian);
+                size_out = s->page_size;
+                pd.size = cpu_convert_to_target32(size_out, endian);
 
-                ret = write_cache(&page_data, buf, TARGET_PAGE_SIZE, false);
+                ret = write_cache(&page_data, buf, s->page_size, false);
                 if (ret < 0) {
                     dump_error(s, "dump: failed to write page data.\n");
                     goto out;
@@ -1334,8 +1410,8 @@ static int write_dump_pages(DumpState *s)
             }
 
             /* get and write page desc here */
-            pd.page_flags = cpu_to_dump64(s, 0);
-            pd.offset = cpu_to_dump64(s, offset_data);
+            pd.page_flags = cpu_convert_to_target64(0, endian);
+            pd.offset = cpu_convert_to_target64(offset_data, endian);
             offset_data += size_out;
 
             ret = write_cache(&page_desc, &pd, sizeof(PageDescriptor), false);
@@ -1461,7 +1537,7 @@ static void get_max_mapnr(DumpState *s)
     GuestPhysBlock *last_block;
 
     last_block = QTAILQ_LAST(&s->guest_phys_blocks.head, GuestPhysBlockHead);
-    s->max_mapnr = paddr_to_pfn(last_block->target_end);
+    s->max_mapnr = paddr_to_pfn(last_block->target_end, s->page_shift);
 }
 
 static int dump_init(DumpState *s, int fd, bool has_format,
@@ -1494,6 +1570,7 @@ static int dump_init(DumpState *s, int fd, bool has_format,
         nr_cpus++;
     }
 
+    s->errp = errp;
     s->fd = fd;
     s->has_filter = has_filter;
     s->begin = begin;
@@ -1538,12 +1615,14 @@ static int dump_init(DumpState *s, int fd, bool has_format,
     }
 
     s->nr_cpus = nr_cpus;
+    s->page_size = TARGET_PAGE_SIZE;
+    s->page_shift = ffs(s->page_size) - 1;
 
     get_max_mapnr(s);
 
     uint64_t tmp;
-    tmp = DIV_ROUND_UP(DIV_ROUND_UP(s->max_mapnr, CHAR_BIT), TARGET_PAGE_SIZE);
-    s->len_dump_bitmap = tmp * TARGET_PAGE_SIZE;
+    tmp = DIV_ROUND_UP(DIV_ROUND_UP(s->max_mapnr, CHAR_BIT), s->page_size);
+    s->len_dump_bitmap = tmp * s->page_size;
 
     /* init for kdump-compressed format */
     if (has_format && format != DUMP_GUEST_MEMORY_FORMAT_ELF) {
@@ -1553,12 +1632,6 @@ static int dump_init(DumpState *s, int fd, bool has_format,
             break;
 
         case DUMP_GUEST_MEMORY_FORMAT_KDUMP_LZO:
-#ifdef CONFIG_LZO
-            if (lzo_init() != LZO_E_OK) {
-                error_setg(errp, "failed to initialize the LZO library");
-                goto cleanup;
-            }
-#endif
             s->flag_compress = DUMP_DH_COMPRESSED_LZO;
             break;
 
@@ -1707,11 +1780,11 @@ void qmp_dump_guest_memory(bool paging, const char *file, bool has_begin,
     }
 
     if (has_format && format != DUMP_GUEST_MEMORY_FORMAT_ELF) {
-        if (create_kdump_vmcore(s) < 0) {
+        if (create_kdump_vmcore(s) < 0 && !error_is_set(s->errp)) {
             error_set(errp, QERR_IO_ERROR);
         }
     } else {
-        if (create_vmcore(s) < 0) {
+        if (create_vmcore(s) < 0 && !error_is_set(s->errp)) {
             error_set(errp, QERR_IO_ERROR);
         }
     }

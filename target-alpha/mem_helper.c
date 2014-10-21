@@ -18,8 +18,8 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
-#include "exec/cpu_ldst.h"
+#include "helper.h"
+
 
 /* Softmmu support */
 #ifndef CONFIG_USER_ONLY
@@ -96,11 +96,11 @@ uint64_t helper_stq_c_phys(CPUAlphaState *env, uint64_t p, uint64_t v)
     return ret;
 }
 
-void alpha_cpu_do_unaligned_access(CPUState *cs, vaddr addr,
-                                   int is_write, int is_user, uintptr_t retaddr)
+static void do_unaligned_access(CPUAlphaState *env, target_ulong addr,
+                                int is_write, int is_user, uintptr_t retaddr)
 {
-    AlphaCPU *cpu = ALPHA_CPU(cs);
-    CPUAlphaState *env = &cpu->env;
+    AlphaCPU *cpu = alpha_env_get_cpu(env);
+    CPUState *cs = CPU(cpu);
     uint64_t pc;
     uint32_t insn;
 
@@ -130,6 +130,23 @@ void alpha_cpu_unassigned_access(CPUState *cs, hwaddr addr,
     env->trap_arg1 = is_write ? 1 : 0;
     dynamic_excp(env, 0, EXCP_MCHK, 0);
 }
+
+#include "exec/softmmu_exec.h"
+
+#define MMUSUFFIX _mmu
+#define ALIGNED_ONLY
+
+#define SHIFT 0
+#include "exec/softmmu_template.h"
+
+#define SHIFT 1
+#include "exec/softmmu_template.h"
+
+#define SHIFT 2
+#include "exec/softmmu_template.h"
+
+#define SHIFT 3
+#include "exec/softmmu_template.h"
 
 /* try to fill the TLB and return an exception if error. If retaddr is
    NULL, it means that the function was called in C code (i.e. not

@@ -29,17 +29,13 @@
 #include "block/block_int.h"
 #include "qemu/option.h"
 
-static QemuOptsList raw_create_opts = {
-    .name = "raw-create-opts",
-    .head = QTAILQ_HEAD_INITIALIZER(raw_create_opts.head),
-    .desc = {
-        {
-            .name = BLOCK_OPT_SIZE,
-            .type = QEMU_OPT_SIZE,
-            .help = "Virtual disk size"
-        },
-        { /* end of list */ }
-    }
+static QEMUOptionParameter raw_create_options[] = {
+    {
+        .name = BLOCK_OPT_SIZE,
+        .type = OPT_SIZE,
+        .help = "Virtual disk size"
+    },
+    { 0 }
 };
 
 static int raw_reopen_prepare(BDRVReopenState *reopen_state,
@@ -94,9 +90,10 @@ static int raw_get_info(BlockDriverState *bs, BlockDriverInfo *bdi)
     return bdrv_get_info(bs->file, bdi);
 }
 
-static void raw_refresh_limits(BlockDriverState *bs, Error **errp)
+static int raw_refresh_limits(BlockDriverState *bs)
 {
     bs->bl = bs->file->bl;
+    return 0;
 }
 
 static int raw_truncate(BlockDriverState *bs, int64_t offset)
@@ -142,12 +139,13 @@ static int raw_has_zero_init(BlockDriverState *bs)
     return bdrv_has_zero_init(bs->file);
 }
 
-static int raw_create(const char *filename, QemuOpts *opts, Error **errp)
+static int raw_create(const char *filename, QEMUOptionParameter *options,
+                      Error **errp)
 {
     Error *local_err = NULL;
     int ret;
 
-    ret = bdrv_create_file(filename, opts, &local_err);
+    ret = bdrv_create_file(filename, options, &local_err);
     if (local_err) {
         error_propagate(errp, local_err);
     }
@@ -196,7 +194,7 @@ static BlockDriver bdrv_raw = {
     .bdrv_lock_medium     = &raw_lock_medium,
     .bdrv_ioctl           = &raw_ioctl,
     .bdrv_aio_ioctl       = &raw_aio_ioctl,
-    .create_opts          = &raw_create_opts,
+    .create_options       = &raw_create_options[0],
     .bdrv_has_zero_init   = &raw_has_zero_init
 };
 

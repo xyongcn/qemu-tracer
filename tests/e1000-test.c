@@ -13,40 +13,21 @@
 #include "qemu/osdep.h"
 
 /* Tests only initialization so far. TODO: Replace with functional tests */
-static void test_device(gconstpointer data)
+static void nop(void)
 {
-    const char *model = data;
-    QTestState *s;
-    char *args;
-
-    args = g_strdup_printf("-device %s", model);
-    s = qtest_start(args);
-
-    if (s) {
-        qtest_quit(s);
-    }
-    g_free(args);
 }
-
-static const char *models[] = {
-    "e1000",
-    "e1000-82540em",
-    "e1000-82544gc",
-    "e1000-82545em",
-};
 
 int main(int argc, char **argv)
 {
-    int i;
+    int ret;
 
     g_test_init(&argc, &argv, NULL);
+    qtest_add_func("/e1000/nop", nop);
 
-    for (i = 0; i < ARRAY_SIZE(models); i++) {
-        char *path;
+    qtest_start("-device e1000");
+    ret = g_test_run();
 
-        path = g_strdup_printf("/%s/e1000/%s", qtest_get_arch(), models[i]);
-        g_test_add_data_func(path, models[i], test_device);
-    }
+    qtest_end();
 
-    return g_test_run();
+    return ret;
 }

@@ -5,7 +5,6 @@
 #include <string.h>
 
 #include "cpu.h"
-#include "exec/cpu_ldst.h"
 
 #undef DEBUG_REMAP
 #ifdef DEBUG_REMAP
@@ -299,7 +298,7 @@ static inline int access_ok(int type, abi_ulong addr, abi_ulong size)
    __builtin_choose_expr(sizeof(*(hptr)) == 2, stw_##e##_p,             \
    __builtin_choose_expr(sizeof(*(hptr)) == 4, stl_##e##_p,             \
    __builtin_choose_expr(sizeof(*(hptr)) == 8, stq_##e##_p, abort))))   \
-     ((hptr), (x)), (void)0)
+     ((hptr), (x)), 0)
 
 #define __get_user_e(x, hptr, e)                                        \
   ((x) = (typeof(*hptr))(                                               \
@@ -307,7 +306,7 @@ static inline int access_ok(int type, abi_ulong addr, abi_ulong size)
    __builtin_choose_expr(sizeof(*(hptr)) == 2, lduw_##e##_p,            \
    __builtin_choose_expr(sizeof(*(hptr)) == 4, ldl_##e##_p,             \
    __builtin_choose_expr(sizeof(*(hptr)) == 8, ldq_##e##_p, abort))))   \
-     (hptr)), (void)0)
+     (hptr)), 0)
 
 #ifdef TARGET_WORDS_BIGENDIAN
 # define __put_user(x, hptr)  __put_user_e(x, hptr, be)
@@ -326,9 +325,9 @@ static inline int access_ok(int type, abi_ulong addr, abi_ulong size)
 ({									\
     abi_ulong __gaddr = (gaddr);					\
     target_type *__hptr;						\
-    abi_long __ret = 0;							\
+    abi_long __ret;							\
     if ((__hptr = lock_user(VERIFY_WRITE, __gaddr, sizeof(target_type), 0))) { \
-        __put_user((x), __hptr);				\
+        __ret = __put_user((x), __hptr);				\
         unlock_user(__hptr, __gaddr, sizeof(target_type));		\
     } else								\
         __ret = -TARGET_EFAULT;						\
@@ -339,9 +338,9 @@ static inline int access_ok(int type, abi_ulong addr, abi_ulong size)
 ({									\
     abi_ulong __gaddr = (gaddr);					\
     target_type *__hptr;						\
-    abi_long __ret = 0;							\
+    abi_long __ret;							\
     if ((__hptr = lock_user(VERIFY_READ, __gaddr, sizeof(target_type), 1))) { \
-        __get_user((x), __hptr);				\
+        __ret = __get_user((x), __hptr);				\
         unlock_user(__hptr, __gaddr, 0);				\
     } else {								\
         /* avoid warning */						\

@@ -30,8 +30,8 @@
 #include "qemu/error-report.h"
 
 struct QemuOpt {
-    char *name;
-    char *str;
+    const char   *name;
+    const char   *str;
 
     const QemuOptDesc *desc;
     union {

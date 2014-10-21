@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "sysemu/sysemu.h"
 #include "qemu/timer.h"
 

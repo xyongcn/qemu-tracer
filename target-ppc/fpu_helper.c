@@ -17,7 +17,7 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 /*****************************************************************************/
 /* Floating point operations helpers */
@@ -977,6 +977,7 @@ uint64_t helper_fres(CPUPPCState *env, uint64_t arg)
 uint64_t helper_frsqrte(CPUPPCState *env, uint64_t arg)
 {
     CPU_DoubleU farg;
+    float32 f32;
 
     farg.ll = arg;
 
@@ -990,6 +991,8 @@ uint64_t helper_frsqrte(CPUPPCState *env, uint64_t arg)
         }
         farg.d = float64_sqrt(farg.d, &env->fp_status);
         farg.d = float64_div(float64_one, farg.d, &env->fp_status);
+        f32 = float64_to_float32(farg.d, &env->fp_status);
+        farg.d = float32_to_float64(f32, &env->fp_status);
     }
     return farg.ll;
 }

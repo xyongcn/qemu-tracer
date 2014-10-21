@@ -169,6 +169,7 @@ static const VMStateDescription vmstate_onenand = {
     .name = "onenand",
     .version_id = 1,
     .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
     .pre_save = onenand_pre_save,
     .post_load = onenand_post_load,
     .fields = (VMStateField[]) {
@@ -335,7 +336,9 @@ static inline int onenand_prog_spare(OneNANDState *s, int sec, int secn,
                                     dp, 1) < 0;
             }
         }
-        g_free(dp);
+        if (dp) {
+            g_free(dp);
+        }
     }
     return result;
 }

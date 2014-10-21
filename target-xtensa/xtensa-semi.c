@@ -30,7 +30,7 @@
 #include <string.h>
 #include <stddef.h>
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "qemu/log.h"
 
 enum {

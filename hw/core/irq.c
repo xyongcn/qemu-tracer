@@ -23,13 +23,8 @@
  */
 #include "qemu-common.h"
 #include "hw/irq.h"
-#include "qom/object.h"
-
-#define IRQ(obj) OBJECT_CHECK(struct IRQState, (obj), TYPE_IRQ)
 
 struct IRQState {
-    Object parent_obj;
-
     qemu_irq_handler handler;
     void *opaque;
     int n;
@@ -47,14 +42,23 @@ qemu_irq *qemu_extend_irqs(qemu_irq *old, int n_old, qemu_irq_handler handler,
                            void *opaque, int n)
 {
     qemu_irq *s;
+    struct IRQState *p;
     int i;
 
     if (!old) {
         n_old = 0;
     }
     s = old ? g_renew(qemu_irq, old, n + n_old) : g_new(qemu_irq, n);
-    for (i = n_old; i < n + n_old; i++) {
-        s[i] = qemu_allocate_irq(handler, opaque, i);
+    p = old ? g_renew(struct IRQState, s[0], n + n_old) :
+                g_new(struct IRQState, n);
+    for (i = 0; i < n + n_old; i++) {
+        if (i >= n_old) {
+            p->handler = handler;
+            p->opaque = opaque;
+            p->n = i;
+        }
+        s[i] = p;
+        p++;
     }
     return s;
 }
@@ -68,7 +72,7 @@ qemu_irq qemu_allocate_irq(qemu_irq_handler handler, void *opaque, int n)
 {
     struct IRQState *irq;
 
-    irq = IRQ(object_new(TYPE_IRQ));
+    irq = g_new(struct IRQState, 1);
     irq->handler = handler;
     irq->opaque = opaque;
     irq->n = n;
@@ -76,18 +80,15 @@ qemu_irq qemu_allocate_irq(qemu_irq_handler handler, void *opaque, int n)
     return irq;
 }
 
-void qemu_free_irqs(qemu_irq *s, int n)
+void qemu_free_irqs(qemu_irq *s)
 {
-    int i;
-    for (i = 0; i < n; i++) {
-        qemu_free_irq(s[i]);
-    }
+    g_free(s[0]);
     g_free(s);
 }
 
 void qemu_free_irq(qemu_irq irq)
 {
-    object_unref(OBJECT(irq));
+    g_free(irq);
 }
 
 static void qemu_notirq(void *opaque, int line, int level)
@@ -101,7 +102,7 @@ qemu_irq qemu_irq_invert(qemu_irq irq)
 {
     /* The default state for IRQs is low, so raise the output now.  */
     qemu_irq_raise(irq);
-    return qemu_allocate_irq(qemu_notirq, irq, 0);
+    return qemu_allocate_irqs(qemu_notirq, irq, 1)[0];
 }
 
 static void qemu_splitirq(void *opaque, int line, int level)
@@ -116,7 +117,7 @@ qemu_irq qemu_irq_split(qemu_irq irq1, qemu_irq irq2)
     qemu_irq *s = g_malloc0(2 * sizeof(qemu_irq));
     s[0] = irq1;
     s[1] = irq2;
-    return qemu_allocate_irq(qemu_splitirq, s, 0);
+    return qemu_allocate_irqs(qemu_splitirq, s, 1)[0];
 }
 
 static void proxy_irq_handler(void *opaque, int n, int level)
@@ -149,16 +150,3 @@ void qemu_irq_intercept_out(qemu_irq **gpio_out, qemu_irq_handler handler, int n
     qemu_irq *old_irqs = *gpio_out;
     *gpio_out = qemu_allocate_irqs(handler, old_irqs, n);
 }
-
-static const TypeInfo irq_type_info = {
-   .name = TYPE_IRQ,
-   .parent = TYPE_OBJECT,
-   .instance_size = sizeof(struct IRQState),
-};
-
-static void irq_register_types(void)
-{
-    type_register_static(&irq_type_info);
-}
-
-type_init(irq_register_types)

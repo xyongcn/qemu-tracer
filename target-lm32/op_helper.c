@@ -1,18 +1,28 @@
 #include <assert.h>
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "qemu/host-utils.h"
 
 #include "hw/lm32/lm32_pic.h"
 #include "hw/char/lm32_juart.h"
 
-#include "exec/cpu_ldst.h"
+#include "exec/softmmu_exec.h"
 
 #ifndef CONFIG_USER_ONLY
 #include "sysemu/sysemu.h"
 #endif
 
 #if !defined(CONFIG_USER_ONLY)
+#define MMUSUFFIX _mmu
+#define SHIFT 0
+#include "exec/softmmu_template.h"
+#define SHIFT 1
+#include "exec/softmmu_template.h"
+#define SHIFT 2
+#include "exec/softmmu_template.h"
+#define SHIFT 3
+#include "exec/softmmu_template.h"
+
 void raise_exception(CPULM32State *env, int index)
 {
     CPUState *cs = CPU(lm32_env_get_cpu(env));
@@ -42,7 +52,7 @@ void HELPER(ill)(CPULM32State *env)
     fprintf(stderr, "VM paused due to illegal instruction. "
             "Connect a debugger or switch to the monitor console "
             "to find out more.\n");
-    vm_stop(RUN_STATE_PAUSED);
+    qemu_system_vmstop_request(RUN_STATE_PAUSED);
     cs->halted = 1;
     raise_exception(env, EXCP_HALTED);
 #endif

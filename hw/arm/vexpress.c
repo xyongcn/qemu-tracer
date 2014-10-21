@@ -28,7 +28,6 @@
 #include "net/net.h"
 #include "sysemu/sysemu.h"
 #include "hw/boards.h"
-#include "hw/loader.h"
 #include "exec/address-spaces.h"
 #include "sysemu/blockdev.h"
 #include "hw/block/flash.h"
@@ -84,7 +83,6 @@ enum {
 };
 
 static hwaddr motherboard_legacy_map[] = {
-    [VE_NORFLASHALIAS] = 0,
     /* CS7: 0x10000000 .. 0x10020000 */
     [VE_SYSREGS] = 0x10000000,
     [VE_SP810] = 0x10001000,
@@ -115,6 +113,7 @@ static hwaddr motherboard_legacy_map[] = {
     [VE_VIDEORAM] = 0x4c000000,
     [VE_ETHERNET] = 0x4e000000,
     [VE_USB] = 0x4f000000,
+    [VE_NORFLASHALIAS] = -1, /* not present */
 };
 
 static hwaddr motherboard_aseries_map[] = {
@@ -510,7 +509,7 @@ static pflash_t *ve_pflash_cfi01_register(hwaddr base, const char *name,
 }
 
 static void vexpress_common_init(VEDBoardInfo *daughterboard,
-                                 MachineState *machine)
+                                 QEMUMachineInitArgs *args)
 {
     DeviceState *dev, *sysctl, *pl041;
     qemu_irq pic[64];
@@ -526,28 +525,7 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
     const hwaddr *map = daughterboard->motherboard_map;
     int i;
 
-    daughterboard->init(daughterboard, machine->ram_size, machine->cpu_model,
-                        pic);
-
-    /*
-     * If a bios file was provided, attempt to map it into memory
-     */
-    if (bios_name) {
-        const char *fn;
-
-        if (drive_get(IF_PFLASH, 0, 0)) {
-            error_report("The contents of the first flash device may be "
-                         "specified with -bios or with -drive if=pflash... "
-                         "but you cannot use both options at once");
-            exit(1);
-        }
-        fn = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
-        if (!fn || load_image_targphys(fn, map[VE_NORFLASH0],
-                                       VEXPRESS_FLASH_SIZE) < 0) {
-            error_report("Could not load ROM image '%s'", bios_name);
-            exit(1);
-        }
-    }
+    daughterboard->init(daughterboard, args->ram_size, args->cpu_model, pic);
 
     /* Motherboard peripherals: the wiring is the same but the
      * addresses vary between the legacy and A-Series memory maps.
@@ -661,10 +639,10 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
                              pic[40 + i]);
     }
 
-    daughterboard->bootinfo.ram_size = machine->ram_size;
-    daughterboard->bootinfo.kernel_filename = machine->kernel_filename;
-    daughterboard->bootinfo.kernel_cmdline = machine->kernel_cmdline;
-    daughterboard->bootinfo.initrd_filename = machine->initrd_filename;
+    daughterboard->bootinfo.ram_size = args->ram_size;
+    daughterboard->bootinfo.kernel_filename = args->kernel_filename;
+    daughterboard->bootinfo.kernel_cmdline = args->kernel_cmdline;
+    daughterboard->bootinfo.initrd_filename = args->initrd_filename;
     daughterboard->bootinfo.nb_cpus = smp_cpus;
     daughterboard->bootinfo.board_id = VEXPRESS_BOARD_ID;
     daughterboard->bootinfo.loader_start = daughterboard->loader_start;
@@ -675,14 +653,14 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
     arm_load_kernel(ARM_CPU(first_cpu), &daughterboard->bootinfo);
 }
 
-static void vexpress_a9_init(MachineState *machine)
+static void vexpress_a9_init(QEMUMachineInitArgs *args)
 {
-    vexpress_common_init(&a9_daughterboard, machine);
+    vexpress_common_init(&a9_daughterboard, args);
 }
 
-static void vexpress_a15_init(MachineState *machine)
+static void vexpress_a15_init(QEMUMachineInitArgs *args)
 {
-    vexpress_common_init(&a15_daughterboard, machine);
+    vexpress_common_init(&a15_daughterboard, args);
 }
 
 static QEMUMachine vexpress_a9_machine = {

@@ -6,6 +6,7 @@
  */
 
 #include "qemu-common.h"
+#include "qemu/thread.h"
 
 #include "vcard.h"
 #include "vreader.h"
@@ -16,7 +17,7 @@ vevent_new(VEventType type, VReader *reader, VCard *card)
 {
     VEvent *new_vevent;
 
-    new_vevent = g_new(VEvent, 1);
+    new_vevent = (VEvent *)g_malloc(sizeof(VEvent));
     new_vevent->next = NULL;
     new_vevent->type = type;
     new_vevent->reader = vreader_reference(reader);
@@ -42,11 +43,13 @@ vevent_delete(VEvent *vevent)
 
 static VEvent *vevent_queue_head;
 static VEvent *vevent_queue_tail;
-static CompatGMutex vevent_queue_lock;
-static CompatGCond vevent_queue_condition;
+static QemuMutex vevent_queue_lock;
+static QemuCond vevent_queue_condition;
 
 void vevent_queue_init(void)
 {
+    qemu_mutex_init(&vevent_queue_lock);
+    qemu_cond_init(&vevent_queue_condition);
     vevent_queue_head = vevent_queue_tail = NULL;
 }
 
@@ -54,7 +57,7 @@ void
 vevent_queue_vevent(VEvent *vevent)
 {
     vevent->next = NULL;
-    g_mutex_lock(&vevent_queue_lock);
+    qemu_mutex_lock(&vevent_queue_lock);
     if (vevent_queue_head) {
         assert(vevent_queue_tail);
         vevent_queue_tail->next = vevent;
@@ -62,8 +65,8 @@ vevent_queue_vevent(VEvent *vevent)
         vevent_queue_head = vevent;
     }
     vevent_queue_tail = vevent;
-    g_cond_signal(&vevent_queue_condition);
-    g_mutex_unlock(&vevent_queue_lock);
+    qemu_cond_signal(&vevent_queue_condition);
+    qemu_mutex_unlock(&vevent_queue_lock);
 }
 
 /* must have lock */
@@ -83,11 +86,11 @@ VEvent *vevent_wait_next_vevent(void)
 {
     VEvent *vevent;
 
-    g_mutex_lock(&vevent_queue_lock);
+    qemu_mutex_lock(&vevent_queue_lock);
     while ((vevent = vevent_dequeue_vevent()) == NULL) {
-        g_cond_wait(&vevent_queue_condition, &vevent_queue_lock);
+        qemu_cond_wait(&vevent_queue_condition, &vevent_queue_lock);
     }
-    g_mutex_unlock(&vevent_queue_lock);
+    qemu_mutex_unlock(&vevent_queue_lock);
     return vevent;
 }
 
@@ -95,9 +98,9 @@ VEvent *vevent_get_next_vevent(void)
 {
     VEvent *vevent;
 
-    g_mutex_lock(&vevent_queue_lock);
+    qemu_mutex_lock(&vevent_queue_lock);
     vevent = vevent_dequeue_vevent();
-    g_mutex_unlock(&vevent_queue_lock);
+    qemu_mutex_unlock(&vevent_queue_lock);
     return vevent;
 }
 

@@ -19,7 +19,7 @@
 
 #include "cpu.h"
 #include "qemu/host-utils.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 //#define DEBUG_MULDIV
 

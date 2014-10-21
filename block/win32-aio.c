@@ -40,7 +40,6 @@ struct QEMUWin32AIOState {
     HANDLE hIOCP;
     EventNotifier e;
     int count;
-    bool is_aio_context_attached;
 };
 
 typedef struct QEMUWin32AIOCB {
@@ -115,7 +114,7 @@ static void win32_aio_cancel(BlockDriverAIOCB *blockacb)
      * wait for completion.
      */
     while (!HasOverlappedIoCompleted(&waiocb->ov)) {
-        aio_poll(bdrv_get_aio_context(blockacb->bs), true);
+        qemu_aio_wait();
     }
 }
 
@@ -181,20 +180,6 @@ int win32_aio_attach(QEMUWin32AIOState *aio, HANDLE hfile)
     }
 }
 
-void win32_aio_detach_aio_context(QEMUWin32AIOState *aio,
-                                  AioContext *old_context)
-{
-    aio_set_event_notifier(old_context, &aio->e, NULL);
-    aio->is_aio_context_attached = false;
-}
-
-void win32_aio_attach_aio_context(QEMUWin32AIOState *aio,
-                                  AioContext *new_context)
-{
-    aio->is_aio_context_attached = true;
-    aio_set_event_notifier(new_context, &aio->e, win32_aio_completion_cb);
-}
-
 QEMUWin32AIOState *win32_aio_init(void)
 {
     QEMUWin32AIOState *s;
@@ -209,6 +194,8 @@ QEMUWin32AIOState *win32_aio_init(void)
         goto out_close_efd;
     }
 
+    qemu_aio_set_event_notifier(&s->e, win32_aio_completion_cb);
+
     return s;
 
 out_close_efd:
@@ -216,12 +203,4 @@ out_close_efd:
 out_free_state:
     g_free(s);
     return NULL;
-}
-
-void win32_aio_cleanup(QEMUWin32AIOState *aio)
-{
-    assert(!aio->is_aio_context_attached);
-    CloseHandle(aio->hIOCP);
-    event_notifier_cleanup(&aio->e);
-    g_free(aio);
 }

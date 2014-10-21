@@ -195,29 +195,13 @@ typedef struct TestStruct
 static void visit_type_TestStruct(Visitor *v, TestStruct **obj,
                                   const char *name, Error **errp)
 {
-    Error *err = NULL;
+    visit_start_struct(v, (void **)obj, NULL, name, sizeof(TestStruct), errp);
 
-    visit_start_struct(v, (void **)obj, NULL, name, sizeof(TestStruct), &err);
-    if (err) {
-        goto out;
-    }
+    visit_type_int(v, &(*obj)->integer, "integer", errp);
+    visit_type_bool(v, &(*obj)->boolean, "boolean", errp);
+    visit_type_str(v, &(*obj)->string, "string", errp);
 
-    visit_type_int(v, &(*obj)->integer, "integer", &err);
-    if (err) {
-        goto out_end;
-    }
-    visit_type_bool(v, &(*obj)->boolean, "boolean", &err);
-    if (err) {
-        goto out_end;
-    }
-    visit_type_str(v, &(*obj)->string, "string", &err);
-
-out_end:
-    error_propagate(errp, err);
-    err = NULL;
-    visit_end_struct(v, &err);
-out:
-    error_propagate(errp, err);
+    visit_end_struct(v, errp);
 }
 
 static TestStruct *struct_create(void)
@@ -372,8 +356,8 @@ static void test_primitive_lists(gconstpointer opaque)
     TestArgs *args = (TestArgs *) opaque;
     const SerializeOps *ops = args->ops;
     PrimitiveType *pt = args->test_data;
-    PrimitiveList pl = { .value = { NULL } };
-    PrimitiveList pl_copy = { .value = { NULL } };
+    PrimitiveList pl = { .value = { 0 } };
+    PrimitiveList pl_copy = { .value = { 0 } };
     PrimitiveList *pl_copy_ptr = &pl_copy;
     Error *err = NULL;
     void *serialize_data;
@@ -771,7 +755,7 @@ static void test_nested_struct_list(gconstpointer opaque)
     g_free(args);
 }
 
-static PrimitiveType pt_values[] = {
+PrimitiveType pt_values[] = {
     /* string tests */
     {
         .description = "string_empty",

@@ -86,7 +86,6 @@ typedef struct {
 #ifndef HAS_YMF262
     FM_OPL *opl;
 #endif
-    PortioList port_list;
 } AdlibState;
 
 static AdlibState *glob_adlib;
@@ -275,7 +274,9 @@ static void Adlib_fini (AdlibState *s)
     }
 #endif
 
-    g_free(s->mixbuf);
+    if (s->mixbuf) {
+        g_free (s->mixbuf);
+    }
 
     s->active = 0;
     s->enabled = 0;
@@ -292,6 +293,7 @@ static MemoryRegionPortio adlib_portio_list[] = {
 static void adlib_realizefn (DeviceState *dev, Error **errp)
 {
     AdlibState *s = ADLIB(dev);
+    PortioList *port_list = g_new(PortioList, 1);
     struct audsettings as;
 
     if (glob_adlib) {
@@ -347,8 +349,8 @@ static void adlib_realizefn (DeviceState *dev, Error **errp)
 
     adlib_portio_list[0].offset = s->port;
     adlib_portio_list[1].offset = s->port + 8;
-    portio_list_init (&s->port_list, OBJECT(s), adlib_portio_list, s, "adlib");
-    portio_list_add (&s->port_list, isa_address_space_io(&s->parent_obj), 0);
+    portio_list_init (port_list, OBJECT(s), adlib_portio_list, s, "adlib");
+    portio_list_add (port_list, isa_address_space_io(&s->parent_obj), 0);
 }
 
 static Property adlib_properties[] = {

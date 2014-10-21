@@ -52,13 +52,6 @@ General Project Administration
 ------------------------------
 M: Anthony Liguori <aliguori@amazon.com>
 
-Responsible Disclosure, Reporting Security Issues
-------------------------------
-W: http://wiki.qemu.org/SecurityProcess
-M: Michael S. Tsirkin <mst@redhat.com>
-M: Anthony Liguori <aliguori@amazon.com>
-L: secalert@redhat.com
-
 Guest CPU cores (TCG):
 ----------------------
 Alpha
@@ -176,11 +169,6 @@ M: Peter Maydell <peter.maydell@linaro.org>
 S: Maintained
 F: target-arm/kvm.c
 
-MIPS
-M: James Hogan <james.hogan@imgtec.com>
-S: Maintained
-F: target-mips/kvm.c
-
 PPC
 M: Alexander Graf <agraf@suse.de>
 S: Maintained
@@ -248,8 +236,8 @@ S: Maintained
 F: hw/*/exynos*
 
 Calxeda Highbank
-M: Rob Herring <robh@kernel.org>
-S: Maintained
+M: Mark Langsdorf <mark.langsdorf@calxeda.com>
+S: Supported
 F: hw/arm/highbank.c
 F: hw/net/xgmac.c
 
@@ -563,7 +551,6 @@ Devices
 -------
 IDE
 M: Kevin Wolf <kwolf@redhat.com>
-M: Stefan Hajnoczi <stefanha@redhat.com>
 S: Odd Fixes
 F: include/hw/ide.h
 F: hw/ide/
@@ -614,7 +601,6 @@ USB
 M: Gerd Hoffmann <kraxel@redhat.com>
 S: Maintained
 F: hw/usb/*
-F: tests/usb-hcd-ehci-test.c
 
 VFIO
 M: Alex Williamson <alex.williamson@redhat.com>
@@ -665,12 +651,6 @@ S: Supported
 F: hw/block/nvme*
 F: tests/nvme-test.c
 
-megasas
-M: Hannes Reinecke <hare@suse.de>
-S: Supported
-F: hw/scsi/megasas.c
-F: hw/scsi/mfi.h
-
 Xilinx EDK
 M: Peter Crosthwaite <peter.crosthwaite@xilinx.com>
 M: Edgar E. Iglesias <edgar.iglesias@gmail.com>
@@ -686,9 +666,6 @@ M: Gerd Hoffmann <kraxel@redhat.com>
 S: Maintained
 F: audio/
 F: hw/audio/
-F: tests/ac97-test.c
-F: tests/es1370-test.c
-F: tests/intel-hda-test.c
 
 Block
 M: Kevin Wolf <kwolf@redhat.com>
@@ -697,8 +674,6 @@ S: Supported
 F: block*
 F: block/
 F: hw/block/
-F: qemu-img*
-F: qemu-io*
 T: git git://repo.or.cz/qemu/kevin.git block
 T: git git://github.com/stefanha/qemu.git block
 
@@ -731,16 +706,6 @@ M: qemu-devel@nongnu.org
 S: Odd Fixes
 F: gdbstub*
 F: gdb-xml/
-
-Memory API
-M: Paolo Bonzini <pbonzini@redhat.com>
-S: Supported
-F: include/exec/ioport.h
-F: ioport.c
-F: include/exec/memory.h
-F: memory.c
-F: include/exec/memory-internal.h
-F: exec.c
 
 SPICE
 M: Gerd Hoffmann <kraxel@redhat.com>
@@ -813,17 +778,6 @@ S: Supported
 F: qapi-schema.json
 T: git git://repo.or.cz/qemu/qmp-unstable.git queue/qmp
 
-QOM
-M: Anthony Liguori <aliguori@amazon.com>
-M: Andreas Färber <afaerber@suse.de>
-S: Supported
-T: git git://github.com/afaerber/qemu-cpu.git qom-next
-F: include/qom/
-X: include/qom/cpu.h
-F: qom/
-X: qom/cpu.c
-F: tests/qom-test.c
-
 QMP
 M: Luiz Capitulino <lcapitulino@redhat.com>
 S: Maintained
@@ -854,7 +808,7 @@ S: Odd Fixes
 F: scripts/checkpatch.pl
 
 Seccomp
-M: Eduardo Otubo <eduardo.otubo@profitbricks.com>
+M: Eduardo Otubo <otubo@linux.vnet.ibm.com>
 S: Supported
 F: qemu-seccomp.c
 F: include/sysemu/seccomp.h

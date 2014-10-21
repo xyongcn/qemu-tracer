@@ -28,7 +28,6 @@
 #ifndef CPU_XTENSA_H
 #define CPU_XTENSA_H
 
-#define ALIGNED_ONLY
 #define TARGET_LONG_BITS 32
 #define ELF_MACHINE EM_XTENSA
 

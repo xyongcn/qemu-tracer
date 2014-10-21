@@ -272,7 +272,7 @@ static int get_indirect(Vring *vring, VirtQueueElement *elem,
     return 0;
 }
 
-static void vring_unmap_element(VirtQueueElement *elem)
+void vring_free_element(VirtQueueElement *elem)
 {
     int i;
 
@@ -287,6 +287,8 @@ static void vring_unmap_element(VirtQueueElement *elem)
     for (i = 0; i < elem->in_num; i++) {
         vring_unmap(elem->in_sg[i].iov_base, true);
     }
+
+    g_slice_free(VirtQueueElement, elem);
 }
 
 /* This looks in the virtqueue and for the first available buffer, and converts
@@ -301,15 +303,13 @@ static void vring_unmap_element(VirtQueueElement *elem)
  * Stolen from linux/drivers/vhost/vhost.c.
  */
 int vring_pop(VirtIODevice *vdev, Vring *vring,
-              VirtQueueElement *elem)
+              VirtQueueElement **p_elem)
 {
     struct vring_desc desc;
     unsigned int i, head, found = 0, num = vring->vr.num;
     uint16_t avail_idx, last_avail_idx;
+    VirtQueueElement *elem = NULL;
     int ret;
-
-    /* Initialize elem so it can be safely unmapped */
-    elem->in_num = elem->out_num = 0;
 
     /* If there was a fatal error then refuse operation */
     if (vring->broken) {
@@ -342,8 +342,10 @@ int vring_pop(VirtIODevice *vdev, Vring *vring,
      * the index we've seen. */
     head = vring->vr.avail->ring[last_avail_idx % num];
 
+    elem = g_slice_new(VirtQueueElement);
     elem->index = head;
-
+    elem->in_num = elem->out_num = 0;
+    
     /* If their number is silly, that's an error. */
     if (unlikely(head >= num)) {
         error_report("Guest says index %u > %u is available", head, num);
@@ -391,6 +393,7 @@ int vring_pop(VirtIODevice *vdev, Vring *vring,
 
     /* On success, increment avail index. */
     vring->last_avail_idx++;
+    *p_elem = elem;
     return head;
 
 out:
@@ -398,7 +401,10 @@ out:
     if (ret == -EFAULT) {
         vring->broken = true;
     }
-    vring_unmap_element(elem);
+    if (elem) {
+        vring_free_element(elem);
+    }
+    *p_elem = NULL;
     return ret;
 }
 
@@ -412,7 +418,7 @@ void vring_push(Vring *vring, VirtQueueElement *elem, int len)
     unsigned int head = elem->index;
     uint16_t new;
 
-    vring_unmap_element(elem);
+    vring_free_element(elem);
 
     /* Don't touch vring if a fatal error occurred */
     if (vring->broken) {

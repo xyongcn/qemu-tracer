@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "trace.h"
 
 #define DEBUG_PCALL

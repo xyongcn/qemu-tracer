@@ -198,7 +198,8 @@ static const VMStateDescription vmstate_mipsnet = {
     .name = "mipsnet",
     .version_id = 0,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 0,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT32(busy, MIPSnetState),
         VMSTATE_UINT32(rx_count, MIPSnetState),
         VMSTATE_UINT32(rx_read, MIPSnetState),

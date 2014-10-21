@@ -37,6 +37,8 @@ static const uint8_t special_ethaddr[ETH_ALEN] = {
     0x52, 0x55, 0x00, 0x00, 0x00, 0x00
 };
 
+static const uint8_t zero_ethaddr[ETH_ALEN] = { 0, 0, 0, 0, 0, 0 };
+
 u_int curtime;
 
 static QTAILQ_HEAD(slirp_instances, Slirp) slirp_instances =
@@ -137,7 +139,7 @@ int get_dns_addr(struct in_addr *pdns_addr)
         return -1;
 
 #ifdef DEBUG
-    fprintf(stderr, "IP address of your DNS(s): ");
+    lprint("IP address of your DNS(s): ");
 #endif
     while (fgets(buff, 512, f) != NULL) {
         if (sscanf(buff, "nameserver%*[ \t]%256s", buff2) == 1) {
@@ -151,17 +153,17 @@ int get_dns_addr(struct in_addr *pdns_addr)
             }
 #ifdef DEBUG
             else
-                fprintf(stderr, ", ");
+                lprint(", ");
 #endif
             if (++found > 3) {
 #ifdef DEBUG
-                fprintf(stderr, "(more)");
+                lprint("(more)");
 #endif
                 break;
             }
 #ifdef DEBUG
             else
-                fprintf(stderr, "%s", inet_ntoa(tmp_addr));
+                lprint("%s", inet_ntoa(tmp_addr));
 #endif
         }
     }
@@ -776,11 +778,6 @@ int if_encap(Slirp *slirp, struct mbuf *ifm)
         return 1;
     }
 
-    if (iph->ip_dst.s_addr == 0) {
-        /* 0.0.0.0 can not be a destination address, something went wrong,
-         * avoid making it worse */
-        return 1;
-    }
     if (!arp_table_search(slirp, iph->ip_dst.s_addr, ethaddr)) {
         uint8_t arp_req[ETH_HLEN + sizeof(struct arphdr)];
         struct ethhdr *reh = (struct ethhdr *)arp_req;

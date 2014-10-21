@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 /* This function uses non-native bit order */
 #define GET_FIELD(X, FROM, TO)                                  \

@@ -19,7 +19,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "exception.h"
 #include "qemu/host-utils.h"
 

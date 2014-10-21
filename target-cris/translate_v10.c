@@ -516,7 +516,7 @@ static void dec10_reg_swap(DisasContext *dc)
 
     cris_cc_mask(dc, CC_MASK_NZVC);
     t0 = tcg_temp_new();
-    tcg_gen_mov_tl(t0, cpu_R[dc->src]);
+    t_gen_mov_TN_reg(t0, dc->src);
     if (dc->dst & 8)
         tcg_gen_not_tl(t0, t0);
     if (dc->dst & 4)

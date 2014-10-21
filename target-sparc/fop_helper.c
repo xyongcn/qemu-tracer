@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 #define QT0 (env->qt0)
 #define QT1 (env->qt1)

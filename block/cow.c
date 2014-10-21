@@ -82,7 +82,7 @@ static int cow_open(BlockDriverState *bs, QDict *options, int flags,
     if (be32_to_cpu(cow_header.version) != COW_VERSION) {
         char version[64];
         snprintf(version, sizeof(version),
-               "COW version %" PRIu32, cow_header.version);
+               "COW version %d", cow_header.version);
         error_set(errp, QERR_UNKNOWN_BLOCK_FORMAT_FEATURE,
             bs->device_name, "cow", version);
         ret = -ENOTSUP;
@@ -324,31 +324,39 @@ static void cow_close(BlockDriverState *bs)
 {
 }
 
-static int cow_create(const char *filename, QemuOpts *opts, Error **errp)
+static int cow_create(const char *filename, QEMUOptionParameter *options,
+                      Error **errp)
 {
     struct cow_header_v2 cow_header;
     struct stat st;
     int64_t image_sectors = 0;
-    char *image_filename = NULL;
+    const char *image_filename = NULL;
     Error *local_err = NULL;
     int ret;
-    BlockDriverState *cow_bs = NULL;
+    BlockDriverState *cow_bs;
 
     /* Read out options */
-    image_sectors = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0) / 512;
-    image_filename = qemu_opt_get_del(opts, BLOCK_OPT_BACKING_FILE);
-
-    ret = bdrv_create_file(filename, opts, &local_err);
-    if (ret < 0) {
-        error_propagate(errp, local_err);
-        goto exit;
+    while (options && options->name) {
+        if (!strcmp(options->name, BLOCK_OPT_SIZE)) {
+            image_sectors = options->value.n / 512;
+        } else if (!strcmp(options->name, BLOCK_OPT_BACKING_FILE)) {
+            image_filename = options->value.s;
+        }
+        options++;
     }
 
+    ret = bdrv_create_file(filename, options, &local_err);
+    if (ret < 0) {
+        error_propagate(errp, local_err);
+        return ret;
+    }
+
+    cow_bs = NULL;
     ret = bdrv_open(&cow_bs, filename, NULL, NULL,
                     BDRV_O_RDWR | BDRV_O_PROTOCOL, NULL, &local_err);
     if (ret < 0) {
         error_propagate(errp, local_err);
-        goto exit;
+        return ret;
     }
 
     memset(&cow_header, 0, sizeof(cow_header));
@@ -381,29 +389,22 @@ static int cow_create(const char *filename, QemuOpts *opts, Error **errp)
     }
 
 exit:
-    g_free(image_filename);
-    if (cow_bs) {
-        bdrv_unref(cow_bs);
-    }
+    bdrv_unref(cow_bs);
     return ret;
 }
 
-static QemuOptsList cow_create_opts = {
-    .name = "cow-create-opts",
-    .head = QTAILQ_HEAD_INITIALIZER(cow_create_opts.head),
-    .desc = {
-        {
-            .name = BLOCK_OPT_SIZE,
-            .type = QEMU_OPT_SIZE,
-            .help = "Virtual disk size"
-        },
-        {
-            .name = BLOCK_OPT_BACKING_FILE,
-            .type = QEMU_OPT_STRING,
-            .help = "File name of a base image"
-        },
-        { /* end of list */ }
-    }
+static QEMUOptionParameter cow_create_options[] = {
+    {
+        .name = BLOCK_OPT_SIZE,
+        .type = OPT_SIZE,
+        .help = "Virtual disk size"
+    },
+    {
+        .name = BLOCK_OPT_BACKING_FILE,
+        .type = OPT_STRING,
+        .help = "File name of a base image"
+    },
+    { NULL }
 };
 
 static BlockDriver bdrv_cow = {
@@ -415,13 +416,12 @@ static BlockDriver bdrv_cow = {
     .bdrv_close     = cow_close,
     .bdrv_create    = cow_create,
     .bdrv_has_zero_init     = bdrv_has_zero_init_1,
-    .supports_backing       = true,
 
     .bdrv_read              = cow_co_read,
     .bdrv_write             = cow_co_write,
     .bdrv_co_get_block_status   = cow_co_get_block_status,
 
-    .create_opts    = &cow_create_opts,
+    .create_options = cow_create_options,
 };
 
 static void bdrv_cow_init(void)

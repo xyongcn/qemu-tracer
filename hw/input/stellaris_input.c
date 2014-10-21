@@ -51,7 +51,8 @@ static const VMStateDescription vmstate_stellaris_button = {
     .name = "stellaris_button",
     .version_id = 0,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 0,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT8(pressed, gamepad_button),
         VMSTATE_END_OF_LIST()
     }
@@ -61,7 +62,8 @@ static const VMStateDescription vmstate_stellaris_gamepad = {
     .name = "stellaris_gamepad",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
         VMSTATE_INT32(extension, gamepad_state),
         VMSTATE_STRUCT_VARRAY_INT32(buttons, gamepad_state, num_buttons, 0,
                               vmstate_stellaris_button, gamepad_button),

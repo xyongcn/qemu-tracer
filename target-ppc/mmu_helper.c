@@ -17,12 +17,11 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "sysemu/kvm.h"
 #include "kvm_ppc.h"
 #include "mmu-hash64.h"
 #include "mmu-hash32.h"
-#include "exec/cpu_ldst.h"
 
 //#define DEBUG_MMU
 //#define DEBUG_BATS
@@ -897,16 +896,11 @@ static hwaddr booke206_tlb_to_page_size(CPUPPCState *env,
 
 /* TLB check function for MAS based SoftTLBs */
 static int ppcmas_tlb_check(CPUPPCState *env, ppcmas_tlb_t *tlb,
-                            hwaddr *raddrp, target_ulong address,
-                            uint32_t pid)
+                            hwaddr *raddrp,
+                     target_ulong address, uint32_t pid)
 {
-    hwaddr mask;
+    target_ulong mask;
     uint32_t tlb_pid;
-
-    if (!msr_cm) {
-        /* In 32bit mode we can only address 32bit EAs */
-        address = (uint32_t)address;
-    }
 
     /* Check valid flag */
     if (!(tlb->mas1 & MAS1_VALID)) {
@@ -2891,7 +2885,7 @@ void helper_booke206_tlbilx3(CPUPPCState *env, target_ulong address)
     tlb_flush(CPU(cpu), 1);
 }
 
-void helper_booke206_tlbflush(CPUPPCState *env, target_ulong type)
+void helper_booke206_tlbflush(CPUPPCState *env, uint32_t type)
 {
     int flags = 0;
 
@@ -2908,6 +2902,22 @@ void helper_booke206_tlbflush(CPUPPCState *env, target_ulong type)
 
 
 /*****************************************************************************/
+
+#include "exec/softmmu_exec.h"
+
+#define MMUSUFFIX _mmu
+
+#define SHIFT 0
+#include "exec/softmmu_template.h"
+
+#define SHIFT 1
+#include "exec/softmmu_template.h"
+
+#define SHIFT 2
+#include "exec/softmmu_template.h"
+
+#define SHIFT 3
+#include "exec/softmmu_template.h"
 
 /* try to fill the TLB and return an exception if error. If retaddr is
    NULL, it means that the function was called in C code (i.e. not

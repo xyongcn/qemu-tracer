@@ -2,19 +2,16 @@
 # QAPI command marshaller generator
 #
 # Copyright IBM, Corp. 2011
-# Copyright (C) 2014 Red Hat, Inc.
 #
 # Authors:
 #  Anthony Liguori <aliguori@us.ibm.com>
 #  Michael Roth    <mdroth@linux.vnet.ibm.com>
-#  Markus Armbruster <armbru@redhat.com>
 #
 # This work is licensed under the terms of the GNU GPL, version 2.
 # See the COPYING file in the top-level directory.
 
 from ordereddict import OrderedDict
 from qapi import *
-import re
 import sys
 import os
 import getopt
@@ -29,7 +26,9 @@ def type_visitor(name):
 def generate_command_decl(name, args, ret_type):
     arglist=""
     for argname, argtype, optional, structured in parse_args(args):
-        argtype = c_type(argtype, is_param=True)
+        argtype = c_type(argtype)
+        if argtype == "char *":
+            argtype = "const char *"
         if optional:
             arglist += "bool has_%s, " % c_var(argname)
         arglist += "%s %s, " % (argtype, c_var(argname))
@@ -37,15 +36,6 @@ def generate_command_decl(name, args, ret_type):
 %(ret_type)s qmp_%(name)s(%(args)sError **errp);
 ''',
                  ret_type=c_type(ret_type), name=c_fun(name), args=arglist).strip()
-
-def gen_err_check(errvar):
-    if errvar:
-        return mcgen('''
-if (local_err) {
-    goto out;
-}
-''')
-    return ''
 
 def gen_sync_call(name, args, ret_type, indent=0):
     ret = ""
@@ -59,14 +49,15 @@ def gen_sync_call(name, args, ret_type, indent=0):
         arglist += "%s, " % (c_var(argname))
     push_indent(indent)
     ret = mcgen('''
-%(retval)sqmp_%(name)s(%(args)s&local_err);
+%(retval)sqmp_%(name)s(%(args)serrp);
 
 ''',
                 name=c_fun(name), args=arglist, retval=retval).rstrip()
     if ret_type:
-        ret += "\n" + gen_err_check('local_err')
         ret += "\n" + mcgen(''''
-%(marshal_output_call)s
+if (!error_is_set(errp)) {
+    %(marshal_output_call)s
+}
 ''',
                             marshal_output_call=gen_marshal_output_call(name, ret_type)).rstrip()
     pop_indent(indent)
@@ -76,19 +67,18 @@ def gen_sync_call(name, args, ret_type, indent=0):
 def gen_marshal_output_call(name, ret_type):
     if not ret_type:
         return ""
-    return "qmp_marshal_output_%s(retval, ret, &local_err);" % c_fun(name)
+    return "qmp_marshal_output_%s(retval, ret, errp);" % c_fun(name)
 
-def gen_visitor_input_containers_decl(args, obj):
+def gen_visitor_input_containers_decl(args):
     ret = ""
 
     push_indent()
     if len(args) > 0:
         ret += mcgen('''
-QmpInputVisitor *mi = qmp_input_visitor_new_strict(%(obj)s);
+QmpInputVisitor *mi;
 QapiDeallocVisitor *md;
 Visitor *v;
-''',
-                     obj=obj)
+''')
     pop_indent()
 
     return ret.rstrip()
@@ -102,24 +92,23 @@ def gen_visitor_input_vars_decl(args):
 bool has_%(argname)s = false;
 ''',
                          argname=c_var(argname))
-        if is_c_ptr(argtype):
+        if c_type(argtype).endswith("*"):
             ret += mcgen('''
 %(argtype)s %(argname)s = NULL;
 ''',
                          argname=c_var(argname), argtype=c_type(argtype))
         else:
             ret += mcgen('''
-%(argtype)s %(argname)s = {0};
+%(argtype)s %(argname)s;
 ''',
                          argname=c_var(argname), argtype=c_type(argtype))
 
     pop_indent()
     return ret.rstrip()
 
-def gen_visitor_input_block(args, dealloc=False):
+def gen_visitor_input_block(args, obj, dealloc=False):
     ret = ""
-    errparg = '&local_err'
-    errarg = 'local_err'
+    errparg = 'errp'
 
     if len(args) == 0:
         return ret
@@ -128,44 +117,44 @@ def gen_visitor_input_block(args, dealloc=False):
 
     if dealloc:
         errparg = 'NULL'
-        errarg = None;
         ret += mcgen('''
-qmp_input_visitor_cleanup(mi);
 md = qapi_dealloc_visitor_new();
 v = qapi_dealloc_get_visitor(md);
 ''')
     else:
         ret += mcgen('''
+mi = qmp_input_visitor_new_strict(%(obj)s);
 v = qmp_input_get_visitor(mi);
-''')
+''',
+                     obj=obj)
 
     for argname, argtype, optional, structured in parse_args(args):
         if optional:
             ret += mcgen('''
-visit_optional(v, &has_%(c_name)s, "%(name)s", %(errp)s);
-''',
-                         c_name=c_var(argname), name=argname, errp=errparg)
-            ret += gen_err_check(errarg)
-            ret += mcgen('''
+visit_start_optional(v, &has_%(c_name)s, "%(name)s", %(errp)s);
 if (has_%(c_name)s) {
 ''',
-                         c_name=c_var(argname))
+                         c_name=c_var(argname), name=argname, errp=errparg)
             push_indent()
         ret += mcgen('''
 %(visitor)s(v, &%(c_name)s, "%(name)s", %(errp)s);
 ''',
                      c_name=c_var(argname), name=argname, argtype=argtype,
                      visitor=type_visitor(argtype), errp=errparg)
-        ret += gen_err_check(errarg)
         if optional:
             pop_indent()
             ret += mcgen('''
 }
-''')
+visit_end_optional(v, %(errp)s);
+''', errp=errparg)
 
     if dealloc:
         ret += mcgen('''
 qapi_dealloc_visitor_cleanup(md);
+''')
+    else:
+        ret += mcgen('''
+qmp_input_visitor_cleanup(mi);
 ''')
     pop_indent()
     return ret.rstrip()
@@ -177,22 +166,16 @@ def gen_marshal_output(name, args, ret_type, middle_mode):
     ret = mcgen('''
 static void qmp_marshal_output_%(c_name)s(%(c_ret_type)s ret_in, QObject **ret_out, Error **errp)
 {
-    Error *local_err = NULL;
+    QapiDeallocVisitor *md = qapi_dealloc_visitor_new();
     QmpOutputVisitor *mo = qmp_output_visitor_new();
-    QapiDeallocVisitor *md;
     Visitor *v;
 
     v = qmp_output_get_visitor(mo);
-    %(visitor)s(v, &ret_in, "unused", &local_err);
-    if (local_err) {
-        goto out;
+    %(visitor)s(v, &ret_in, "unused", errp);
+    if (!error_is_set(errp)) {
+        *ret_out = qmp_output_get_qobject(mo);
     }
-    *ret_out = qmp_output_get_qobject(mo);
-
-out:
-    error_propagate(errp, local_err);
     qmp_output_visitor_cleanup(mo);
-    md = qapi_dealloc_visitor_new();
     v = qapi_dealloc_get_visitor(md);
     %(visitor)s(v, &ret_in, "unused", NULL);
     qapi_dealloc_visitor_cleanup(md);
@@ -217,17 +200,18 @@ def gen_marshal_input(name, args, ret_type, middle_mode):
     ret = mcgen('''
 %(header)s
 {
-    Error *local_err = NULL;
 ''',
                 header=hdr)
 
     if middle_mode:
         ret += mcgen('''
+    Error *local_err = NULL;
+    Error **errp = &local_err;
     QDict *args = (QDict *)qdict;
 ''')
 
     if ret_type:
-        if is_c_ptr(ret_type):
+        if c_type(ret_type).endswith("*"):
             retval = "    %s retval = NULL;" % c_type(ret_type)
         else:
             retval = "    %s retval;" % c_type(ret_type)
@@ -244,32 +228,29 @@ def gen_marshal_input(name, args, ret_type, middle_mode):
 %(visitor_input_block)s
 
 ''',
-                     visitor_input_containers_decl=gen_visitor_input_containers_decl(args, "QOBJECT(args)"),
+                     visitor_input_containers_decl=gen_visitor_input_containers_decl(args),
                      visitor_input_vars_decl=gen_visitor_input_vars_decl(args),
-                     visitor_input_block=gen_visitor_input_block(args))
+                     visitor_input_block=gen_visitor_input_block(args, "QOBJECT(args)"))
     else:
         ret += mcgen('''
-
     (void)args;
 ''')
 
     ret += mcgen('''
+    if (error_is_set(errp)) {
+        goto out;
+    }
 %(sync_call)s
 ''',
                  sync_call=gen_sync_call(name, args, ret_type, indent=4))
-    if re.search('^ *goto out\\;', ret, re.MULTILINE):
-        ret += mcgen('''
+    ret += mcgen('''
 
 out:
-''')
-    if not middle_mode:
-        ret += mcgen('''
-    error_propagate(errp, local_err);
 ''')
     ret += mcgen('''
 %(visitor_input_block_cleanup)s
 ''',
-                 visitor_input_block_cleanup=gen_visitor_input_block(args,
+                 visitor_input_block_cleanup=gen_visitor_input_block(args, None,
                                                                      dealloc=True))
 
     if middle_mode:
@@ -388,10 +369,9 @@ def gen_command_def_prologue(prefix="", proxy=False):
 
 
 try:
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "chp:i:o:m",
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "chp:o:m",
                                    ["source", "header", "prefix=",
-                                    "input-file=", "output-dir=",
-                                    "type=", "middle"])
+                                    "output-dir=", "type=", "middle"])
 except getopt.GetoptError, err:
     print str(err)
     sys.exit(1)
@@ -409,8 +389,6 @@ do_h = False
 for o, a in opts:
     if o in ("-p", "--prefix"):
         prefix = a
-    elif o in ("-i", "--input-file"):
-        input_file = a
     elif o in ("-o", "--output-dir"):
         output_dir = a + "/"
     elif o in ("-t", "--type"):
@@ -442,7 +420,7 @@ except os.error, e:
     if e.errno != errno.EEXIST:
         raise
 
-exprs = parse_schema(input_file)
+exprs = parse_schema(sys.stdin)
 commands = filter(lambda expr: expr.has_key('command'), exprs)
 commands = filter(lambda expr: not expr.has_key('gen'), commands)
 

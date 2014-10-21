@@ -11,7 +11,7 @@
 
 #include "cpu.h"
 #include "exec/gdbstub.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "qemu/host-utils.h"
 #ifndef CONFIG_USER_ONLY
 #include "ui/console.h"

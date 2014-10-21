@@ -19,8 +19,11 @@
  */
 
 #include "cpu.h"
-#include "exec/cpu_ldst.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
+
+#if !defined(CONFIG_USER_ONLY)
+#include "exec/softmmu_exec.h"
+#endif
 
 /* #define DEBUG_HELPER */
 #ifdef DEBUG_HELPER

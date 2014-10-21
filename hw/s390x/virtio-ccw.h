@@ -22,7 +22,6 @@
 #include <hw/virtio/virtio-balloon.h>
 #include <hw/virtio/virtio-rng.h>
 #include <hw/virtio/virtio-bus.h>
-#include <hw/s390x/s390_flic.h>
 
 #define VIRTUAL_CSSID 0xfe
 
@@ -76,14 +75,6 @@ typedef struct VirtIOCCWDeviceClass {
 #define VIRTIO_CCW_FLAG_USE_IOEVENTFD_BIT 1
 #define VIRTIO_CCW_FLAG_USE_IOEVENTFD   (1 << VIRTIO_CCW_FLAG_USE_IOEVENTFD_BIT)
 
-typedef struct IndAddr {
-    hwaddr addr;
-    uint64_t map;
-    unsigned long refcnt;
-    int len;
-    QTAILQ_ENTRY(IndAddr) sibling;
-} IndAddr;
-
 struct VirtioCcwDevice {
     DeviceState parent_obj;
     SubchDev *sch;
@@ -94,11 +85,10 @@ struct VirtioCcwDevice {
     bool ioeventfd_disabled;
     uint32_t flags;
     uint8_t thinint_isc;
-    AdapterRoutes routes;
     /* Guest provided values: */
-    IndAddr *indicators;
-    IndAddr *indicators2;
-    IndAddr *summary_indicator;
+    hwaddr indicators;
+    hwaddr indicators2;
+    hwaddr summary_indicator;
     uint64_t ind_bit;
 };
 
@@ -144,6 +134,7 @@ typedef struct VHostSCSICcw {
 typedef struct VirtIOBlkCcw {
     VirtioCcwDevice parent_obj;
     VirtIOBlock vdev;
+    VirtIOBlkConf blk;
 } VirtIOBlkCcw;
 
 /* virtio-balloon-ccw */

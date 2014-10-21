@@ -193,11 +193,6 @@ static void pmac_ide_transfer_cb(void *opaque, int ret)
         goto done;
     }
 
-    if (--io->requests) {
-        /* More requests still in flight */
-        return;
-    }
-
     if (!m->dma_active) {
         MACIO_DPRINTF("waiting for data (%#x - %#x - %x)\n",
                       s->nsector, io->len, s->status);
@@ -217,13 +212,6 @@ static void pmac_ide_transfer_cb(void *opaque, int ret)
         s->nsector -= n;
     }
 
-    if (io->finish_remain_read) {
-        /* Finish a stale read from the last iteration */
-        io->finish_remain_read = false;
-        cpu_physical_memory_write(io->finish_addr, io->remainder,
-                                  io->finish_len);
-    }
-
     MACIO_DPRINTF("remainder: %d io->len: %d nsector: %d "
                   "sector_num: %" PRId64 "\n",
                   io->remainder_len, io->len, s->nsector, sector_num);
@@ -241,6 +229,7 @@ static void pmac_ide_transfer_cb(void *opaque, int ret)
             break;
         case IDE_DMA_WRITE:
             cpu_physical_memory_read(io->addr, p, remainder_len);
+            bdrv_write(s->bs, sector_num - 1, io->remainder, 1);
             break;
         case IDE_DMA_TRIM:
             break;
@@ -248,15 +237,6 @@ static void pmac_ide_transfer_cb(void *opaque, int ret)
         io->addr += remainder_len;
         io->len -= remainder_len;
         io->remainder_len -= remainder_len;
-
-        if (s->dma_cmd == IDE_DMA_WRITE && !io->remainder_len) {
-            io->requests++;
-            qemu_iovec_reset(&io->iov);
-            qemu_iovec_add(&io->iov, io->remainder, 0x200);
-
-            m->aiocb = bdrv_aio_writev(s->bs, sector_num - 1, &io->iov, 1,
-                                       pmac_ide_transfer_cb, io);
-        }
     }
 
     if (s->nsector == 0 && !io->remainder_len) {
@@ -287,25 +267,20 @@ static void pmac_ide_transfer_cb(void *opaque, int ret)
 
         switch (s->dma_cmd) {
         case IDE_DMA_READ:
-            io->requests++;
-            io->finish_addr = io->addr + io->len - unaligned;
-            io->finish_len = unaligned;
-            io->finish_remain_read = true;
-            qemu_iovec_reset(&io->iov);
-            qemu_iovec_add(&io->iov, io->remainder, 0x200);
-
-            m->aiocb = bdrv_aio_readv(s->bs, sector_num + nsector, &io->iov, 1,
-                                      pmac_ide_transfer_cb, io);
+            bdrv_read(s->bs, sector_num + nsector, io->remainder, 1);
+            cpu_physical_memory_write(io->addr + io->len - unaligned,
+                                      io->remainder, unaligned);
             break;
         case IDE_DMA_WRITE:
             /* cache the contents in our io struct */
             cpu_physical_memory_read(io->addr + io->len - unaligned,
-                                     io->remainder + io->remainder_len,
-                                     unaligned);
+                                     io->remainder, unaligned);
             break;
         case IDE_DMA_TRIM:
             break;
         }
+
+        io->len -= unaligned;
     }
 
     MACIO_DPRINTF("io->len = %#x\n", io->len);
@@ -317,12 +292,10 @@ static void pmac_ide_transfer_cb(void *opaque, int ret)
     io->remainder_len = (0x200 - unaligned) & 0x1ff;
     MACIO_DPRINTF("set remainder to: %d\n", io->remainder_len);
 
-    /* Only subsector reads happening */
+    /* We would read no data from the block layer, thus not get a callback.
+       Just fake completion manually. */
     if (!io->len) {
-        if (!io->requests) {
-            io->requests++;
-            pmac_ide_transfer_cb(opaque, ret);
-        }
+        pmac_ide_transfer_cb(opaque, 0);
         return;
     }
 
@@ -346,8 +319,6 @@ static void pmac_ide_transfer_cb(void *opaque, int ret)
                                DMA_DIRECTION_TO_DEVICE);
         break;
     }
-
-    io->requests++;
     return;
 
 done:
@@ -366,27 +337,6 @@ static void pmac_ide_transfer(DBDMA_io *io)
 
     s->io_buffer_size = 0;
     if (s->drive_kind == IDE_CD) {
-
-        /* Handle non-block ATAPI DMA transfers */
-        if (s->lba == -1) {
-            s->io_buffer_size = MIN(io->len, s->packet_transfer_size);
-            bdrv_acct_start(s->bs, &s->acct, s->io_buffer_size,
-                            BDRV_ACCT_READ);
-            MACIO_DPRINTF("non-block ATAPI DMA transfer size: %d\n",
-                          s->io_buffer_size);
-
-            /* Copy ATAPI buffer directly to RAM and finish */
-            cpu_physical_memory_write(io->addr, s->io_buffer,
-                                      s->io_buffer_size);
-            ide_atapi_cmd_ok(s);
-            m->dma_active = false;
-
-            MACIO_DPRINTF("end of non-block ATAPI DMA transfer\n");
-            bdrv_acct_done(s->bs, &s->acct);
-            io->dma_end(io);
-            return;
-        }
-
         bdrv_acct_start(s->bs, &s->acct, io->len, BDRV_ACCT_READ);
         pmac_ide_atapi_transfer_cb(io, 0);
         return;
@@ -403,7 +353,6 @@ static void pmac_ide_transfer(DBDMA_io *io)
         break;
     }
 
-    io->requests++;
     pmac_ide_transfer_cb(io, 0);
 }
 
@@ -531,7 +480,8 @@ static const VMStateDescription vmstate_pmac = {
     .name = "ide",
     .version_id = 3,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 0,
+    .fields      = (VMStateField []) {
         VMSTATE_IDE_BUS(bus, MACIOIDEState),
         VMSTATE_IDE_DRIVES(bus.ifs, MACIOIDEState),
         VMSTATE_END_OF_LIST()

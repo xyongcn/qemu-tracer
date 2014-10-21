@@ -63,7 +63,6 @@
     #define TARGET_SO_PEERSEC              30
     #define TARGET_SO_SNDBUFFORCE          31
     #define TARGET_SO_RCVBUFFORCE          33
-    #define TARGET_SO_PASSSEC              34
 
     /** sock_type - Socket types
      *
@@ -243,10 +242,6 @@
 
     #define TARGET_SOCK_MAX (TARGET_SOCK_PACKET + 1)
     #define TARGET_SOCK_TYPE_MASK    0xf  /* Covers up to TARGET_SOCK_MAX-1. */
-
-    #define TARGET_SO_PASSSEC        31
-#else
-    #define TARGET_SO_PASSSEC        34
 #endif
 
     /* For setsockopt(2) */

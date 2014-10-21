@@ -109,7 +109,6 @@ void cache_fini(PageCache *cache)
 
     g_free(cache->page_cache);
     cache->page_cache = NULL;
-    g_free(cache);
 }
 
 static size_t cache_get_cache_pos(const PageCache *cache,

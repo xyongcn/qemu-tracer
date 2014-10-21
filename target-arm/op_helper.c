@@ -17,9 +17,8 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "internals.h"
-#include "exec/cpu_ldst.h"
 
 #define SIGNBIT (uint32_t)0x80000000
 #define SIGNBIT64 ((uint64_t)1 << 63)
@@ -56,6 +55,22 @@ uint32_t HELPER(neon_tbl)(CPUARMState *env, uint32_t ireg, uint32_t def,
 }
 
 #if !defined(CONFIG_USER_ONLY)
+
+#include "exec/softmmu_exec.h"
+
+#define MMUSUFFIX _mmu
+
+#define SHIFT 0
+#include "exec/softmmu_template.h"
+
+#define SHIFT 1
+#include "exec/softmmu_template.h"
+
+#define SHIFT 2
+#include "exec/softmmu_template.h"
+
+#define SHIFT 3
+#include "exec/softmmu_template.h"
 
 /* try to fill the TLB and return an exception if error. If retaddr is
  * NULL, it means that the function was called in C code (i.e. not
@@ -371,13 +386,11 @@ void HELPER(msr_i_pstate)(CPUARMState *env, uint32_t op, uint32_t imm)
 
 void HELPER(exception_return)(CPUARMState *env)
 {
-    int cur_el = arm_current_pl(env);
-    unsigned int spsr_idx = aarch64_banked_spsr_index(cur_el);
-    uint32_t spsr = env->banked_spsr[spsr_idx];
+    uint32_t spsr = env->banked_spsr[0];
     int new_el, i;
 
     if (env->pstate & PSTATE_SP) {
-        env->sp_el[cur_el] = env->xregs[31];
+        env->sp_el[1] = env->xregs[31];
     } else {
         env->sp_el[0] = env->xregs[31];
     }
@@ -385,7 +398,6 @@ void HELPER(exception_return)(CPUARMState *env)
     env->exclusive_addr = -1;
 
     if (spsr & PSTATE_nRW) {
-        /* TODO: We currently assume EL1/2/3 are running in AArch64.  */
         env->aarch64 = 0;
         new_el = 0;
         env->uncached_cpsr = 0x10;
@@ -394,14 +406,11 @@ void HELPER(exception_return)(CPUARMState *env)
             env->regs[i] = env->xregs[i];
         }
 
-        env->regs[15] = env->elr_el[1] & ~0x1;
+        env->regs[15] = env->elr_el1 & ~0x1;
     } else {
         new_el = extract32(spsr, 2, 2);
-        if (new_el > cur_el
-            || (new_el == 2 && !arm_feature(env, ARM_FEATURE_EL2))) {
-            /* Disallow return to an EL which is unimplemented or higher
-             * than the current one.
-             */
+        if (new_el > 1) {
+            /* Return to unimplemented EL */
             goto illegal_return;
         }
         if (extract32(spsr, 1, 1)) {
@@ -409,13 +418,13 @@ void HELPER(exception_return)(CPUARMState *env)
             goto illegal_return;
         }
         if (new_el == 0 && (spsr & PSTATE_SP)) {
-            /* Return to EL0 with M[0] bit set */
+            /* Return to EL1 with M[0] bit set */
             goto illegal_return;
         }
         env->aarch64 = 1;
         pstate_write(env, spsr);
         env->xregs[31] = env->sp_el[new_el];
-        env->pc = env->elr_el[cur_el];
+        env->pc = env->elr_el1;
     }
 
     return;
@@ -429,7 +438,7 @@ illegal_return:
      * no change to exception level, execution state or stack pointer
      */
     env->pstate |= PSTATE_IL;
-    env->pc = env->elr_el[cur_el];
+    env->pc = env->elr_el1;
     spsr &= PSTATE_NZCV | PSTATE_DAIF;
     spsr |= pstate_read(env) & ~(PSTATE_NZCV | PSTATE_DAIF);
     pstate_write(env, spsr);

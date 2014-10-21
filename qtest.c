@@ -148,7 +148,7 @@ static int hex2nib(char ch)
     } else if (ch >= 'a' && ch <= 'f') {
         return 10 + (ch - 'a');
     } else if (ch >= 'A' && ch <= 'F') {
-        return 10 + (ch - 'A');
+        return 10 + (ch - 'a');
     } else {
         return -1;
     }
@@ -233,8 +233,7 @@ static void qtest_process_command(CharDriverState *chr, gchar **words)
     g_assert(command);
     if (strcmp(words[0], "irq_intercept_out") == 0
         || strcmp(words[0], "irq_intercept_in") == 0) {
-        DeviceState *dev;
-        NamedGPIOList *ngl;
+	DeviceState *dev;
 
         g_assert(words[1]);
         dev = DEVICE(object_resolve_path(words[1], NULL));
@@ -254,18 +253,10 @@ static void qtest_process_command(CharDriverState *chr, gchar **words)
 	    return;
         }
 
-        QLIST_FOREACH(ngl, &dev->gpios, node) {
-            /* We don't support intercept of named GPIOs yet */
-            if (ngl->name) {
-                continue;
-            }
-            if (words[0][14] == 'o') {
-                qemu_irq_intercept_out(&ngl->out, qtest_irq_handler,
-                                       ngl->num_out);
-            } else {
-                qemu_irq_intercept_in(ngl->in, qtest_irq_handler,
-                                      ngl->num_in);
-            }
+        if (words[0][14] == 'o') {
+            qemu_irq_intercept_out(&dev->gpio_out, qtest_irq_handler, dev->num_gpio_out);
+        } else {
+            qemu_irq_intercept_in(dev->gpio_in, qtest_irq_handler, dev->num_gpio_in);
         }
         irq_intercept_dev = dev;
         qtest_send_prefix(chr);
@@ -509,7 +500,7 @@ static void qtest_event(void *opaque, int event)
     }
 }
 
-int qtest_init_accel(MachineClass *mc)
+int qtest_init_accel(QEMUMachine *machine)
 {
     configure_icount("0");
 

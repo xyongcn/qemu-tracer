@@ -498,7 +498,6 @@ typedef struct XHCIEvRingSeg {
 enum xhci_flags {
     XHCI_FLAG_USE_MSI = 1,
     XHCI_FLAG_USE_MSI_X,
-    XHCI_FLAG_SS_FIRST,
 };
 
 static void xhci_kick_ep(XHCIState *xhci, unsigned int slotid,
@@ -622,11 +621,6 @@ static const char *ep_state_name(uint32_t state)
                        ARRAY_SIZE(ep_state_names));
 }
 
-static bool xhci_get_flag(XHCIState *xhci, enum xhci_flags bit)
-{
-    return xhci->flags & (1 << bit);
-}
-
 static uint64_t xhci_mfindex_get(XHCIState *xhci)
 {
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
@@ -715,18 +709,10 @@ static XHCIPort *xhci_lookup_port(XHCIState *xhci, struct USBPort *uport)
     case USB_SPEED_LOW:
     case USB_SPEED_FULL:
     case USB_SPEED_HIGH:
-        if (xhci_get_flag(xhci, XHCI_FLAG_SS_FIRST)) {
-            index = uport->index + xhci->numports_3;
-        } else {
-            index = uport->index;
-        }
+        index = uport->index;
         break;
     case USB_SPEED_SUPER:
-        if (xhci_get_flag(xhci, XHCI_FLAG_SS_FIRST)) {
-            index = uport->index;
-        } else {
-            index = uport->index + xhci->numports_2;
-        }
+        index = uport->index + xhci->numports_2;
         break;
     default:
         return NULL;
@@ -2865,7 +2851,7 @@ static void xhci_port_update(XHCIPort *port, int is_detach)
 
 static void xhci_port_reset(XHCIPort *port, bool warm_reset)
 {
-    trace_usb_xhci_port_reset(port->portnr, warm_reset);
+    trace_usb_xhci_port_reset(port->portnr);
 
     if (!xhci_port_have_device(port)) {
         return;
@@ -2981,11 +2967,7 @@ static uint64_t xhci_cap_read(void *ptr, hwaddr reg, unsigned size)
         ret = 0x20425355; /* "USB " */
         break;
     case 0x28: /* Supported Protocol:08 */
-        if (xhci_get_flag(xhci, XHCI_FLAG_SS_FIRST)) {
-            ret = (xhci->numports_2<<8) | (xhci->numports_3+1);
-        } else {
-            ret = (xhci->numports_2<<8) | 1;
-        }
+        ret = 0x00000001 | (xhci->numports_2<<8);
         break;
     case 0x2c: /* Supported Protocol:0c */
         ret = 0x00000000; /* reserved */
@@ -2997,11 +2979,7 @@ static uint64_t xhci_cap_read(void *ptr, hwaddr reg, unsigned size)
         ret = 0x20425355; /* "USB " */
         break;
     case 0x38: /* Supported Protocol:08 */
-        if (xhci_get_flag(xhci, XHCI_FLAG_SS_FIRST)) {
-            ret = (xhci->numports_3<<8) | 1;
-        } else {
-            ret = (xhci->numports_3<<8) | (xhci->numports_2+1);
-        }
+        ret = 0x00000000 | (xhci->numports_2+1) | (xhci->numports_3<<8);
         break;
     case 0x3c: /* Supported Protocol:0c */
         ret = 0x00000000; /* reserved */
@@ -3457,7 +3435,7 @@ static void xhci_child_detach(USBPort *uport, USBDevice *child)
     USBBus *bus = usb_bus_from_device(child);
     XHCIState *xhci = container_of(bus, XHCIState, bus);
 
-    xhci_detach_slot(xhci, child->port);
+    xhci_detach_slot(xhci, uport);
 }
 
 static USBPortOps xhci_uport_ops = {
@@ -3534,13 +3512,8 @@ static void usb_xhci_init(XHCIState *xhci)
     for (i = 0; i < usbports; i++) {
         speedmask = 0;
         if (i < xhci->numports_2) {
-            if (xhci_get_flag(xhci, XHCI_FLAG_SS_FIRST)) {
-                port = &xhci->ports[i + xhci->numports_3];
-                port->portnr = i + 1 + xhci->numports_3;
-            } else {
-                port = &xhci->ports[i];
-                port->portnr = i + 1;
-            }
+            port = &xhci->ports[i];
+            port->portnr = i + 1;
             port->uport = &xhci->uports[i];
             port->speedmask =
                 USB_SPEED_MASK_LOW  |
@@ -3550,13 +3523,8 @@ static void usb_xhci_init(XHCIState *xhci)
             speedmask |= port->speedmask;
         }
         if (i < xhci->numports_3) {
-            if (xhci_get_flag(xhci, XHCI_FLAG_SS_FIRST)) {
-                port = &xhci->ports[i];
-                port->portnr = i + 1;
-            } else {
-                port = &xhci->ports[i + xhci->numports_2];
-                port->portnr = i + 1 + xhci->numports_2;
-            }
+            port = &xhci->ports[i + xhci->numports_2];
+            port->portnr = i + 1 + xhci->numports_2;
             port->uport = &xhci->uports[i];
             port->speedmask = USB_SPEED_MASK_SUPER;
             snprintf(port->name, sizeof(port->name), "usb3 port #%d", i+1);
@@ -3626,15 +3594,13 @@ static int usb_xhci_initfn(struct PCIDevice *dev)
                      PCI_BASE_ADDRESS_SPACE_MEMORY|PCI_BASE_ADDRESS_MEM_TYPE_64,
                      &xhci->mem);
 
-    if (pci_bus_is_express(dev->bus)) {
-        ret = pcie_endpoint_cap_init(dev, 0xa0);
-        assert(ret >= 0);
-    }
+    ret = pcie_endpoint_cap_init(dev, 0xa0);
+    assert(ret >= 0);
 
-    if (xhci_get_flag(xhci, XHCI_FLAG_USE_MSI)) {
+    if (xhci->flags & (1 << XHCI_FLAG_USE_MSI)) {
         msi_init(dev, 0x70, xhci->numintrs, true, false);
     }
-    if (xhci_get_flag(xhci, XHCI_FLAG_USE_MSI_X)) {
+    if (xhci->flags & (1 << XHCI_FLAG_USE_MSI_X)) {
         msix_init(dev, xhci->numintrs,
                   &xhci->mem, 0, OFF_MSIX_TABLE,
                   &xhci->mem, 0, OFF_MSIX_PBA,
@@ -3737,7 +3703,6 @@ static const VMStateDescription vmstate_xhci_event = {
         VMSTATE_UINT32(flags,  XHCIEvent),
         VMSTATE_UINT8(slotid,  XHCIEvent),
         VMSTATE_UINT8(epid,    XHCIEvent),
-        VMSTATE_END_OF_LIST()
     }
 };
 
@@ -3816,8 +3781,6 @@ static const VMStateDescription vmstate_xhci = {
 static Property xhci_properties[] = {
     DEFINE_PROP_BIT("msi",      XHCIState, flags, XHCI_FLAG_USE_MSI, true),
     DEFINE_PROP_BIT("msix",     XHCIState, flags, XHCI_FLAG_USE_MSI_X, true),
-    DEFINE_PROP_BIT("superspeed-ports-first",
-                    XHCIState, flags, XHCI_FLAG_SS_FIRST, true),
     DEFINE_PROP_UINT32("intrs", XHCIState, numintrs, MAXINTRS),
     DEFINE_PROP_UINT32("slots", XHCIState, numslots, MAXSLOTS),
     DEFINE_PROP_UINT32("p2",    XHCIState, numports_2, 4),

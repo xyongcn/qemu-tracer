@@ -39,9 +39,9 @@
 #define BIOS_FILENAME "shix_bios.bin"
 #define BIOS_ADDRESS 0xA0000000
 
-static void shix_init(MachineState *machine)
+static void shix_init(QEMUMachineInitArgs *args)
 {
-    const char *cpu_model = machine->cpu_model;
+    const char *cpu_model = args->cpu_model;
     int ret;
     SuperHCPU *cpu;
     struct SH7750State *s;

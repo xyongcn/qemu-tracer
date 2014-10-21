@@ -19,7 +19,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 #define TO_SPR(group, number) (((group) << 11) + (number))
 

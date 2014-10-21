@@ -33,10 +33,10 @@
 #  define DPRINTF(fmt, ...) do { } while (0)
 #endif
 
-#if HOST_LONG_BITS == 32
+#if defined(__i386__)
 #  define MCACHE_BUCKET_SHIFT 16
 #  define MCACHE_MAX_SIZE     (1UL<<31) /* 2GB Cap */
-#else
+#elif defined(__x86_64__)
 #  define MCACHE_BUCKET_SHIFT 20
 #  define MCACHE_MAX_SIZE     (1UL<<35) /* 32GB Cap */
 #endif

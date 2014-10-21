@@ -37,8 +37,9 @@ vcard_buffer_response_new(unsigned char *buffer, int size)
 {
     VCardBufferResponse *new_buffer;
 
-    new_buffer = g_new(VCardBufferResponse, 1);
-    new_buffer->buffer = (unsigned char *)g_memdup(buffer, size);
+    new_buffer = (VCardBufferResponse *)g_malloc(sizeof(VCardBufferResponse));
+    new_buffer->buffer = (unsigned char *)g_malloc(size);
+    memcpy(new_buffer->buffer, buffer, size);
     new_buffer->buffer_len = size;
     new_buffer->current = new_buffer->buffer;
     new_buffer->len = size;
@@ -51,7 +52,9 @@ vcard_buffer_response_delete(VCardBufferResponse *buffer_response)
     if (buffer_response == NULL) {
         return;
     }
-    g_free(buffer_response->buffer);
+    if (buffer_response->buffer) {
+        g_free(buffer_response->buffer);
+    }
     g_free(buffer_response);
 }
 
@@ -99,11 +102,15 @@ vcard_new_applet(VCardProcessAPDU applet_process_function,
 {
     VCardApplet *applet;
 
-    applet = g_new0(VCardApplet, 1);
+    applet = (VCardApplet *)g_malloc(sizeof(VCardApplet));
+    applet->next = NULL;
+    applet->applet_private = NULL;
+    applet->applet_private_free = NULL;
     applet->process_apdu = applet_process_function;
     applet->reset_applet = applet_reset_function;
 
-    applet->aid = g_memdup(aid, aid_len);
+    applet->aid = g_malloc(aid_len);
+    memcpy(applet->aid, aid, aid_len);
     applet->aid_len = aid_len;
     return applet;
 }
@@ -117,8 +124,12 @@ vcard_delete_applet(VCardApplet *applet)
     }
     if (applet->applet_private_free) {
         applet->applet_private_free(applet->applet_private);
+        applet->applet_private = NULL;
     }
-    g_free(applet->aid);
+    if (applet->aid) {
+        g_free(applet->aid);
+        applet->aid = NULL;
+    }
     g_free(applet);
 }
 
@@ -138,11 +149,18 @@ VCard *
 vcard_new(VCardEmul *private, VCardEmulFree private_free)
 {
     VCard *new_card;
+    int i;
 
-    new_card = g_new0(VCard, 1);
+    new_card = (VCard *)g_malloc(sizeof(VCard));
+    new_card->applet_list = NULL;
+    for (i = 0; i < MAX_CHANNEL; i++) {
+        new_card->current_applet[i] = NULL;
+    }
+    new_card->vcard_buffer_response = NULL;
     new_card->type = VCARD_VM;
     new_card->vcard_private = private;
     new_card->vcard_private_free = private_free;
+    new_card->vcard_get_atr = NULL;
     new_card->reference_count = 1;
     return new_card;
 }
@@ -160,8 +178,8 @@ vcard_reference(VCard *vcard)
 void
 vcard_free(VCard *vcard)
 {
-    VCardApplet *current_applet;
-    VCardApplet *next_applet;
+    VCardApplet *current_applet = NULL;
+    VCardApplet *next_applet = NULL;
 
     if (vcard == NULL) {
         return;
@@ -172,6 +190,8 @@ vcard_free(VCard *vcard)
     }
     if (vcard->vcard_private_free) {
         (*vcard->vcard_private_free)(vcard->vcard_private);
+        vcard->vcard_private_free = 0;
+        vcard->vcard_private = 0;
     }
     for (current_applet = vcard->applet_list; current_applet;
                                         current_applet = next_applet) {

@@ -109,7 +109,8 @@ static const VMStateDescription vmstate_ide_mmio = {
     .name = "mmio-ide",
     .version_id = 3,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 0,
+    .fields      = (VMStateField []) {
         VMSTATE_IDE_BUS(bus, MMIOState),
         VMSTATE_IDE_DRIVES(bus.ifs, MMIOState),
         VMSTATE_END_OF_LIST()

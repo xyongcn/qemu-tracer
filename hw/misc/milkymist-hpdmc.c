@@ -143,7 +143,8 @@ static const VMStateDescription vmstate_milkymist_hpdmc = {
     .name = "milkymist-hpdmc",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(regs, MilkymistHpdmcState, R_MAX),
         VMSTATE_END_OF_LIST()
     }

@@ -39,7 +39,6 @@
 #include "qemu/range.h"
 #include "sysemu/kvm.h"
 #include "sysemu/sysemu.h"
-#include "hw/misc/vfio.h"
 
 /* #define DEBUG_VFIO */
 #ifdef DEBUG_VFIO
@@ -120,20 +119,10 @@ typedef struct VFIOINTx {
 } VFIOINTx;
 
 typedef struct VFIOMSIVector {
-    /*
-     * Two interrupt paths are configured per vector.  The first, is only used
-     * for interrupts injected via QEMU.  This is typically the non-accel path,
-     * but may also be used when we want QEMU to handle masking and pending
-     * bits.  The KVM path bypasses QEMU and is therefore higher performance,
-     * but requires masking at the device.  virq is used to track the MSI route
-     * through KVM, thus kvm_interrupt is only available when virq is set to a
-     * valid (>= 0) value.
-     */
-    EventNotifier interrupt;
-    EventNotifier kvm_interrupt;
+    EventNotifier interrupt; /* eventfd triggered on interrupt */
     struct VFIODevice *vdev; /* back pointer to device */
     MSIMessage msg; /* cache the MSI message so we know when it changes */
-    int virq;
+    int virq; /* KVM irqchip route for QEMU bypass */
     bool use;
 } VFIOMSIVector;
 
@@ -144,15 +133,6 @@ enum {
     VFIO_INT_MSIX = 3,
 };
 
-typedef struct VFIOAddressSpace {
-    AddressSpace *as;
-    QLIST_HEAD(, VFIOContainer) containers;
-    QLIST_ENTRY(VFIOAddressSpace) list;
-} VFIOAddressSpace;
-
-static QLIST_HEAD(, VFIOAddressSpace) vfio_address_spaces =
-    QLIST_HEAD_INITIALIZER(vfio_address_spaces);
-
 struct VFIOGroup;
 
 typedef struct VFIOType1 {
@@ -162,7 +142,6 @@ typedef struct VFIOType1 {
 } VFIOType1;
 
 typedef struct VFIOContainer {
-    VFIOAddressSpace *space;
     int fd; /* /dev/vfio/vfio, empowered by the attached groups */
     struct {
         /* enable abstraction to support various iommu backends */
@@ -171,17 +150,9 @@ typedef struct VFIOContainer {
         };
         void (*release)(struct VFIOContainer *);
     } iommu_data;
-    QLIST_HEAD(, VFIOGuestIOMMU) giommu_list;
     QLIST_HEAD(, VFIOGroup) group_list;
     QLIST_ENTRY(VFIOContainer) next;
 } VFIOContainer;
-
-typedef struct VFIOGuestIOMMU {
-    VFIOContainer *container;
-    MemoryRegion *iommu;
-    Notifier n;
-    QLIST_ENTRY(VFIOGuestIOMMU) giommu_next;
-} VFIOGuestIOMMU;
 
 /* Cache of MSI-X setup plus extra mmap and memory region for split BAR map */
 typedef struct VFIOMSIXInfo {
@@ -262,6 +233,9 @@ static const VFIORomBlacklistEntry romblacklist[] = {
 };
 
 #define MSIX_CAP_LENGTH 12
+
+static QLIST_HEAD(, VFIOContainer)
+    container_list = QLIST_HEAD_INITIALIZER(container_list);
 
 static QLIST_HEAD(, VFIOGroup)
     group_list = QLIST_HEAD_INITIALIZER(group_list);
@@ -652,9 +626,9 @@ static void vfio_msi_interrupt(void *opaque)
     MSIMessage msg;
 
     if (vdev->interrupt == VFIO_INT_MSIX) {
-        msg = msix_get_message(&vdev->pdev, nr);
-    } else if (vdev->interrupt == VFIO_INT_MSI) {
         msg = msi_get_message(&vdev->pdev, nr);
+    } else if (vdev->interrupt == VFIO_INT_MSI) {
+        msg = msix_get_message(&vdev->pdev, nr);
     } else {
         abort();
     }
@@ -690,24 +664,12 @@ static int vfio_enable_vectors(VFIODevice *vdev, bool msix)
     fds = (int32_t *)&irq_set->data;
 
     for (i = 0; i < vdev->nr_vectors; i++) {
-        int fd = -1;
-
-        /*
-         * MSI vs MSI-X - The guest has direct access to MSI mask and pending
-         * bits, therefore we always use the KVM signaling path when setup.
-         * MSI-X mask and pending bits are emulated, so we want to use the
-         * KVM signaling path only when configured and unmasked.
-         */
-        if (vdev->msi_vectors[i].use) {
-            if (vdev->msi_vectors[i].virq < 0 ||
-                (msix && msix_is_masked(&vdev->pdev, i))) {
-                fd = event_notifier_get_fd(&vdev->msi_vectors[i].interrupt);
-            } else {
-                fd = event_notifier_get_fd(&vdev->msi_vectors[i].kvm_interrupt);
-            }
+        if (!vdev->msi_vectors[i].use) {
+            fds[i] = -1;
+            continue;
         }
 
-        fds[i] = fd;
+        fds[i] = event_notifier_get_fd(&vdev->msi_vectors[i].interrupt);
     }
 
     ret = ioctl(vdev->fd, VFIO_DEVICE_SET_IRQS, irq_set);
@@ -715,52 +677,6 @@ static int vfio_enable_vectors(VFIODevice *vdev, bool msix)
     g_free(irq_set);
 
     return ret;
-}
-
-static void vfio_add_kvm_msi_virq(VFIOMSIVector *vector, MSIMessage *msg,
-                                  bool msix)
-{
-    int virq;
-
-    if ((msix && !VFIO_ALLOW_KVM_MSIX) ||
-        (!msix && !VFIO_ALLOW_KVM_MSI) || !msg) {
-        return;
-    }
-
-    if (event_notifier_init(&vector->kvm_interrupt, 0)) {
-        return;
-    }
-
-    virq = kvm_irqchip_add_msi_route(kvm_state, *msg);
-    if (virq < 0) {
-        event_notifier_cleanup(&vector->kvm_interrupt);
-        return;
-    }
-
-    if (kvm_irqchip_add_irqfd_notifier(kvm_state, &vector->kvm_interrupt,
-                                       NULL, virq) < 0) {
-        kvm_irqchip_release_virq(kvm_state, virq);
-        event_notifier_cleanup(&vector->kvm_interrupt);
-        return;
-    }
-
-    vector->msg = *msg;
-    vector->virq = virq;
-}
-
-static void vfio_remove_kvm_msi_virq(VFIOMSIVector *vector)
-{
-    kvm_irqchip_remove_irqfd_notifier(kvm_state, &vector->kvm_interrupt,
-                                      vector->virq);
-    kvm_irqchip_release_virq(kvm_state, vector->virq);
-    vector->virq = -1;
-    event_notifier_cleanup(&vector->kvm_interrupt);
-}
-
-static void vfio_update_kvm_msi_virq(VFIOMSIVector *vector, MSIMessage msg)
-{
-    kvm_irqchip_update_msi_route(kvm_state, vector->virq, msg);
-    vector->msg = msg;
 }
 
 static int vfio_msix_vector_do_use(PCIDevice *pdev, unsigned int nr,
@@ -775,32 +691,30 @@ static int vfio_msix_vector_do_use(PCIDevice *pdev, unsigned int nr,
             vdev->host.function, nr);
 
     vector = &vdev->msi_vectors[nr];
+    vector->vdev = vdev;
+    vector->use = true;
 
-    if (!vector->use) {
-        vector->vdev = vdev;
-        vector->virq = -1;
-        if (event_notifier_init(&vector->interrupt, 0)) {
-            error_report("vfio: Error: event_notifier_init failed");
-        }
-        vector->use = true;
-        msix_vector_use(pdev, nr);
+    msix_vector_use(pdev, nr);
+
+    if (event_notifier_init(&vector->interrupt, 0)) {
+        error_report("vfio: Error: event_notifier_init failed");
     }
-
-    qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
-                        handler, NULL, vector);
 
     /*
      * Attempt to enable route through KVM irqchip,
      * default to userspace handling if unavailable.
      */
-    if (vector->virq >= 0) {
-        if (!msg) {
-            vfio_remove_kvm_msi_virq(vector);
-        } else {
-            vfio_update_kvm_msi_virq(vector, *msg);
+    vector->virq = msg && VFIO_ALLOW_KVM_MSIX ?
+                   kvm_irqchip_add_msi_route(kvm_state, *msg) : -1;
+    if (vector->virq < 0 ||
+        kvm_irqchip_add_irqfd_notifier(kvm_state, &vector->interrupt,
+                                       NULL, vector->virq) < 0) {
+        if (vector->virq >= 0) {
+            kvm_irqchip_release_virq(kvm_state, vector->virq);
+            vector->virq = -1;
         }
-    } else {
-        vfio_add_kvm_msi_virq(vector, msg, true);
+        qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
+                            handler, NULL, vector);
     }
 
     /*
@@ -831,11 +745,7 @@ static int vfio_msix_vector_do_use(PCIDevice *pdev, unsigned int nr,
         irq_set->count = 1;
         pfd = (int32_t *)&irq_set->data;
 
-        if (vector->virq >= 0) {
-            *pfd = event_notifier_get_fd(&vector->kvm_interrupt);
-        } else {
-            *pfd = event_notifier_get_fd(&vector->interrupt);
-        }
+        *pfd = event_notifier_get_fd(&vector->interrupt);
 
         ret = ioctl(vdev->fd, VFIO_DEVICE_SET_IRQS, irq_set);
         g_free(irq_set);
@@ -857,41 +767,50 @@ static void vfio_msix_vector_release(PCIDevice *pdev, unsigned int nr)
 {
     VFIODevice *vdev = DO_UPCAST(VFIODevice, pdev, pdev);
     VFIOMSIVector *vector = &vdev->msi_vectors[nr];
+    int argsz;
+    struct vfio_irq_set *irq_set;
+    int32_t *pfd;
 
     DPRINTF("%s(%04x:%02x:%02x.%x) vector %d released\n", __func__,
             vdev->host.domain, vdev->host.bus, vdev->host.slot,
             vdev->host.function, nr);
 
     /*
-     * There are still old guests that mask and unmask vectors on every
-     * interrupt.  If we're using QEMU bypass with a KVM irqfd, leave all of
-     * the KVM setup in place, simply switch VFIO to use the non-bypass
-     * eventfd.  We'll then fire the interrupt through QEMU and the MSI-X
-     * core will mask the interrupt and set pending bits, allowing it to
-     * be re-asserted on unmask.  Nothing to do if already using QEMU mode.
+     * XXX What's the right thing to do here?  This turns off the interrupt
+     * completely, but do we really just want to switch the interrupt to
+     * bouncing through userspace and let msix.c drop it?  Not sure.
      */
-    if (vector->virq >= 0) {
-        int argsz;
-        struct vfio_irq_set *irq_set;
-        int32_t *pfd;
+    msix_vector_unuse(pdev, nr);
 
-        argsz = sizeof(*irq_set) + sizeof(*pfd);
+    argsz = sizeof(*irq_set) + sizeof(*pfd);
 
-        irq_set = g_malloc0(argsz);
-        irq_set->argsz = argsz;
-        irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD |
-                         VFIO_IRQ_SET_ACTION_TRIGGER;
-        irq_set->index = VFIO_PCI_MSIX_IRQ_INDEX;
-        irq_set->start = nr;
-        irq_set->count = 1;
-        pfd = (int32_t *)&irq_set->data;
+    irq_set = g_malloc0(argsz);
+    irq_set->argsz = argsz;
+    irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD |
+                     VFIO_IRQ_SET_ACTION_TRIGGER;
+    irq_set->index = VFIO_PCI_MSIX_IRQ_INDEX;
+    irq_set->start = nr;
+    irq_set->count = 1;
+    pfd = (int32_t *)&irq_set->data;
 
-        *pfd = event_notifier_get_fd(&vector->interrupt);
+    *pfd = -1;
 
-        ioctl(vdev->fd, VFIO_DEVICE_SET_IRQS, irq_set);
+    ioctl(vdev->fd, VFIO_DEVICE_SET_IRQS, irq_set);
 
-        g_free(irq_set);
+    g_free(irq_set);
+
+    if (vector->virq < 0) {
+        qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
+                            NULL, NULL, NULL);
+    } else {
+        kvm_irqchip_remove_irqfd_notifier(kvm_state, &vector->interrupt,
+                                          vector->virq);
+        kvm_irqchip_release_virq(kvm_state, vector->virq);
+        vector->virq = -1;
     }
+
+    event_notifier_cleanup(&vector->interrupt);
+    vector->use = false;
 }
 
 static void vfio_enable_msix(VFIODevice *vdev)
@@ -941,15 +860,11 @@ retry:
         VFIOMSIVector *vector = &vdev->msi_vectors[i];
 
         vector->vdev = vdev;
-        vector->virq = -1;
         vector->use = true;
 
         if (event_notifier_init(&vector->interrupt, 0)) {
             error_report("vfio: Error: event_notifier_init failed");
         }
-
-        qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
-                            vfio_msi_interrupt, NULL, vector);
 
         vector->msg = msi_get_message(&vdev->pdev, i);
 
@@ -957,11 +872,15 @@ retry:
          * Attempt to enable route through KVM irqchip,
          * default to userspace handling if unavailable.
          */
-        vfio_add_kvm_msi_virq(vector, &vector->msg, false);
+        vector->virq = VFIO_ALLOW_KVM_MSI ?
+                       kvm_irqchip_add_msi_route(kvm_state, vector->msg) : -1;
+        if (vector->virq < 0 ||
+            kvm_irqchip_add_irqfd_notifier(kvm_state, &vector->interrupt,
+                                           NULL, vector->virq) < 0) {
+            qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
+                                vfio_msi_interrupt, NULL, vector);
+        }
     }
-
-    /* Set interrupt type prior to possible interrupts */
-    vdev->interrupt = VFIO_INT_MSI;
 
     ret = vfio_enable_vectors(vdev, false);
     if (ret) {
@@ -975,10 +894,14 @@ retry:
         for (i = 0; i < vdev->nr_vectors; i++) {
             VFIOMSIVector *vector = &vdev->msi_vectors[i];
             if (vector->virq >= 0) {
-                vfio_remove_kvm_msi_virq(vector);
+                kvm_irqchip_remove_irqfd_notifier(kvm_state, &vector->interrupt,
+                                                  vector->virq);
+                kvm_irqchip_release_virq(kvm_state, vector->virq);
+                vector->virq = -1;
+            } else {
+                qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
+                                    NULL, NULL, NULL);
             }
-            qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
-                                NULL, NULL, NULL);
             event_notifier_cleanup(&vector->interrupt);
         }
 
@@ -990,16 +913,10 @@ retry:
         }
         vdev->nr_vectors = 0;
 
-        /*
-         * Failing to setup MSI doesn't really fall within any specification.
-         * Let's try leaving interrupts disabled and hope the guest figures
-         * out to fall back to INTx for this device.
-         */
-        error_report("vfio: Error: Failed to enable MSI");
-        vdev->interrupt = VFIO_INT_NONE;
-
         return;
     }
+
+    vdev->interrupt = VFIO_INT_MSI;
 
     DPRINTF("%s(%04x:%02x:%02x.%x) Enabled %d MSI vectors\n", __func__,
             vdev->host.domain, vdev->host.bus, vdev->host.slot,
@@ -1008,20 +925,6 @@ retry:
 
 static void vfio_disable_msi_common(VFIODevice *vdev)
 {
-    int i;
-
-    for (i = 0; i < vdev->nr_vectors; i++) {
-        VFIOMSIVector *vector = &vdev->msi_vectors[i];
-        if (vdev->msi_vectors[i].use) {
-            if (vector->virq >= 0) {
-                vfio_remove_kvm_msi_virq(vector);
-            }
-            qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
-                                NULL, NULL, NULL);
-            event_notifier_cleanup(&vector->interrupt);
-        }
-    }
-
     g_free(vdev->msi_vectors);
     vdev->msi_vectors = NULL;
     vdev->nr_vectors = 0;
@@ -1043,7 +946,6 @@ static void vfio_disable_msix(VFIODevice *vdev)
     for (i = 0; i < vdev->nr_vectors; i++) {
         if (vdev->msi_vectors[i].use) {
             vfio_msix_vector_release(&vdev->pdev, i);
-            msix_vector_unuse(&vdev->pdev, i);
         }
     }
 
@@ -1059,7 +961,30 @@ static void vfio_disable_msix(VFIODevice *vdev)
 
 static void vfio_disable_msi(VFIODevice *vdev)
 {
+    int i;
+
     vfio_disable_irqindex(vdev, VFIO_PCI_MSI_IRQ_INDEX);
+
+    for (i = 0; i < vdev->nr_vectors; i++) {
+        VFIOMSIVector *vector = &vdev->msi_vectors[i];
+
+        if (!vector->use) {
+            continue;
+        }
+
+        if (vector->virq >= 0) {
+            kvm_irqchip_remove_irqfd_notifier(kvm_state,
+                                              &vector->interrupt, vector->virq);
+            kvm_irqchip_release_virq(kvm_state, vector->virq);
+            vector->virq = -1;
+        } else {
+            qemu_set_fd_handler(event_notifier_get_fd(&vector->interrupt),
+                                NULL, NULL, NULL);
+        }
+
+        event_notifier_cleanup(&vector->interrupt);
+    }
+
     vfio_disable_msi_common(vdev);
 
     DPRINTF("%s(%04x:%02x:%02x.%x)\n", __func__, vdev->host.domain,
@@ -1079,7 +1004,17 @@ static void vfio_update_msi(VFIODevice *vdev)
         }
 
         msg = msi_get_message(&vdev->pdev, i);
-        vfio_update_kvm_msi_virq(vector, msg);
+
+        if (msg.address != vector->msg.address ||
+            msg.data != vector->msg.data) {
+
+            DPRINTF("%s(%04x:%02x:%02x.%x) MSI vector %d changed\n",
+                    __func__, vdev->host.domain, vdev->host.bus,
+                    vdev->host.slot, vdev->host.function, i);
+
+            kvm_irqchip_update_msi_route(kvm_state, vector->virq, msg);
+            vector->msg = msg;
+        }
     }
 }
 
@@ -1102,10 +1037,10 @@ static void vfio_bar_write(void *opaque, hwaddr addr,
         buf.byte = data;
         break;
     case 2:
-        buf.word = data;
+        buf.word = cpu_to_le16(data);
         break;
     case 4:
-        buf.dword = data;
+        buf.dword = cpu_to_le32(data);
         break;
     default:
         hw_error("vfio: unsupported write size, %d bytes", size);
@@ -1162,10 +1097,10 @@ static uint64_t vfio_bar_read(void *opaque,
         data = buf.byte;
         break;
     case 2:
-        data = buf.word;
+        data = le16_to_cpu(buf.word);
         break;
     case 4:
-        data = buf.dword;
+        data = le32_to_cpu(buf.dword);
         break;
     default:
         hw_error("vfio: unsupported read size, %d bytes", size);
@@ -1192,7 +1127,7 @@ static uint64_t vfio_bar_read(void *opaque,
 static const MemoryRegionOps vfio_bar_ops = {
     .read = vfio_bar_read,
     .write = vfio_bar_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
 static void vfio_pci_load_rom(VFIODevice *vdev)
@@ -1254,42 +1189,21 @@ static void vfio_pci_load_rom(VFIODevice *vdev)
 static uint64_t vfio_rom_read(void *opaque, hwaddr addr, unsigned size)
 {
     VFIODevice *vdev = opaque;
-    union {
-        uint8_t byte;
-        uint16_t word;
-        uint32_t dword;
-        uint64_t qword;
-    } buf;
-    uint64_t data = 0;
+    uint64_t val = ((uint64_t)1 << (size * 8)) - 1;
 
     /* Load the ROM lazily when the guest tries to read it */
     if (unlikely(!vdev->rom && !vdev->rom_read_failed)) {
         vfio_pci_load_rom(vdev);
     }
 
-    memcpy(&buf, vdev->rom + addr,
+    memcpy(&val, vdev->rom + addr,
            (addr < vdev->rom_size) ? MIN(size, vdev->rom_size - addr) : 0);
-
-    switch (size) {
-    case 1:
-        data = buf.byte;
-        break;
-    case 2:
-        data = buf.word;
-        break;
-    case 4:
-        data = buf.dword;
-        break;
-    default:
-        hw_error("vfio: unsupported read size, %d bytes", size);
-        break;
-    }
 
     DPRINTF("%s(%04x:%02x:%02x.%x, 0x%"HWADDR_PRIx", 0x%x) = 0x%"PRIx64"\n",
             __func__, vdev->host.domain, vdev->host.bus, vdev->host.slot,
-            vdev->host.function, addr, size, data);
+            vdev->host.function, addr, size, val);
 
-    return data;
+    return val;
 }
 
 static void vfio_rom_write(void *opaque, hwaddr addr,
@@ -1300,7 +1214,7 @@ static void vfio_rom_write(void *opaque, hwaddr addr,
 static const MemoryRegionOps vfio_rom_ops = {
     .read = vfio_rom_read,
     .write = vfio_rom_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
 static bool vfio_blacklist_opt_rom(VFIODevice *vdev)
@@ -1754,149 +1668,6 @@ static void vfio_probe_ati_bar4_window_quirk(VFIODevice *vdev, int nr)
             vdev->host.function);
 }
 
-#define PCI_VENDOR_ID_REALTEK 0x10ec
-
-/*
- * RTL8168 devices have a backdoor that can access the MSI-X table.  At BAR2
- * offset 0x70 there is a dword data register, offset 0x74 is a dword address
- * register.  According to the Linux r8169 driver, the MSI-X table is addressed
- * when the "type" portion of the address register is set to 0x1.  This appears
- * to be bits 16:30.  Bit 31 is both a write indicator and some sort of
- * "address latched" indicator.  Bits 12:15 are a mask field, which we can
- * ignore because the MSI-X table should always be accessed as a dword (full
- * mask).  Bits 0:11 is offset within the type.
- *
- * Example trace:
- *
- * Read from MSI-X table offset 0
- * vfio: vfio_bar_write(0000:05:00.0:BAR2+0x74, 0x1f000, 4) // store read addr
- * vfio: vfio_bar_read(0000:05:00.0:BAR2+0x74, 4) = 0x8001f000 // latch
- * vfio: vfio_bar_read(0000:05:00.0:BAR2+0x70, 4) = 0xfee00398 // read data
- *
- * Write 0xfee00000 to MSI-X table offset 0
- * vfio: vfio_bar_write(0000:05:00.0:BAR2+0x70, 0xfee00000, 4) // write data
- * vfio: vfio_bar_write(0000:05:00.0:BAR2+0x74, 0x8001f000, 4) // do write
- * vfio: vfio_bar_read(0000:05:00.0:BAR2+0x74, 4) = 0x1f000 // complete
- */
-
-static uint64_t vfio_rtl8168_window_quirk_read(void *opaque,
-                                               hwaddr addr, unsigned size)
-{
-    VFIOQuirk *quirk = opaque;
-    VFIODevice *vdev = quirk->vdev;
-
-    switch (addr) {
-    case 4: /* address */
-        if (quirk->data.flags) {
-            DPRINTF("%s fake read(%04x:%02x:%02x.%d)\n",
-                    memory_region_name(&quirk->mem), vdev->host.domain,
-                    vdev->host.bus, vdev->host.slot, vdev->host.function);
-
-            return quirk->data.address_match ^ 0x10000000U;
-        }
-        break;
-    case 0: /* data */
-        if (quirk->data.flags) {
-            uint64_t val;
-
-            DPRINTF("%s MSI-X table read(%04x:%02x:%02x.%d)\n",
-                    memory_region_name(&quirk->mem), vdev->host.domain,
-                    vdev->host.bus, vdev->host.slot, vdev->host.function);
-
-            if (!(vdev->pdev.cap_present & QEMU_PCI_CAP_MSIX)) {
-                return 0;
-            }
-
-            io_mem_read(&vdev->pdev.msix_table_mmio,
-                        (hwaddr)(quirk->data.address_match & 0xfff),
-                        &val, size);
-            return val;
-        }
-    }
-
-    DPRINTF("%s direct read(%04x:%02x:%02x.%d)\n",
-            memory_region_name(&quirk->mem), vdev->host.domain,
-            vdev->host.bus, vdev->host.slot, vdev->host.function);
-
-    return vfio_bar_read(&vdev->bars[quirk->data.bar], addr + 0x70, size);
-}
-
-static void vfio_rtl8168_window_quirk_write(void *opaque, hwaddr addr,
-                                            uint64_t data, unsigned size)
-{
-    VFIOQuirk *quirk = opaque;
-    VFIODevice *vdev = quirk->vdev;
-
-    switch (addr) {
-    case 4: /* address */
-        if ((data & 0x7fff0000) == 0x10000) {
-            if (data & 0x10000000U &&
-                vdev->pdev.cap_present & QEMU_PCI_CAP_MSIX) {
-
-                DPRINTF("%s MSI-X table write(%04x:%02x:%02x.%d)\n",
-                        memory_region_name(&quirk->mem), vdev->host.domain,
-                        vdev->host.bus, vdev->host.slot, vdev->host.function);
-
-                io_mem_write(&vdev->pdev.msix_table_mmio,
-                             (hwaddr)(quirk->data.address_match & 0xfff),
-                             data, size);
-            }
-
-            quirk->data.flags = 1;
-            quirk->data.address_match = data;
-
-            return;
-        }
-        quirk->data.flags = 0;
-        break;
-    case 0: /* data */
-        quirk->data.address_mask = data;
-        break;
-    }
-
-    DPRINTF("%s direct write(%04x:%02x:%02x.%d)\n",
-            memory_region_name(&quirk->mem), vdev->host.domain,
-            vdev->host.bus, vdev->host.slot, vdev->host.function);
-
-    vfio_bar_write(&vdev->bars[quirk->data.bar], addr + 0x70, data, size);
-}
-
-static const MemoryRegionOps vfio_rtl8168_window_quirk = {
-    .read = vfio_rtl8168_window_quirk_read,
-    .write = vfio_rtl8168_window_quirk_write,
-    .valid = {
-        .min_access_size = 4,
-        .max_access_size = 4,
-        .unaligned = false,
-    },
-    .endianness = DEVICE_LITTLE_ENDIAN,
-};
-
-static void vfio_probe_rtl8168_bar2_window_quirk(VFIODevice *vdev, int nr)
-{
-    PCIDevice *pdev = &vdev->pdev;
-    VFIOQuirk *quirk;
-
-    if (pci_get_word(pdev->config + PCI_VENDOR_ID) != PCI_VENDOR_ID_REALTEK ||
-        pci_get_word(pdev->config + PCI_DEVICE_ID) != 0x8168 || nr != 2) {
-        return;
-    }
-
-    quirk = g_malloc0(sizeof(*quirk));
-    quirk->vdev = vdev;
-    quirk->data.bar = nr;
-
-    memory_region_init_io(&quirk->mem, OBJECT(vdev), &vfio_rtl8168_window_quirk,
-                          quirk, "vfio-rtl8168-window-quirk", 8);
-    memory_region_add_subregion_overlap(&vdev->bars[nr].mem,
-                                        0x70, &quirk->mem, 1);
-
-    QLIST_INSERT_HEAD(&vdev->bars[nr].quirks, quirk, next);
-
-    DPRINTF("Enabled RTL8168 BAR2 window quirk for device %04x:%02x:%02x.%x\n",
-            vdev->host.domain, vdev->host.bus, vdev->host.slot,
-            vdev->host.function);
-}
 /*
  * Trap the BAR2 MMIO window to config space as well.
  */
@@ -2300,7 +2071,6 @@ static void vfio_bar_quirk_setup(VFIODevice *vdev, int nr)
     vfio_probe_nvidia_bar5_window_quirk(vdev, nr);
     vfio_probe_nvidia_bar0_88000_quirk(vdev, nr);
     vfio_probe_nvidia_bar0_1800_quirk(vdev, nr);
-    vfio_probe_rtl8168_bar2_window_quirk(vdev, nr);
 }
 
 static void vfio_bar_quirk_teardown(VFIODevice *vdev, int nr)
@@ -2462,8 +2232,7 @@ static int vfio_dma_map(VFIOContainer *container, hwaddr iova,
 
 static bool vfio_listener_skipped_section(MemoryRegionSection *section)
 {
-    return (!memory_region_is_ram(section->mr) &&
-            !memory_region_is_iommu(section->mr)) ||
+    return !memory_region_is_ram(section->mr) ||
            /*
             * Sizing an enabled 64-bit BAR can cause spurious mappings to
             * addresses in the upper part of the 64-bit address space.  These
@@ -2473,74 +2242,16 @@ static bool vfio_listener_skipped_section(MemoryRegionSection *section)
            section->offset_within_address_space & (1ULL << 63);
 }
 
-static void vfio_iommu_map_notify(Notifier *n, void *data)
-{
-    VFIOGuestIOMMU *giommu = container_of(n, VFIOGuestIOMMU, n);
-    VFIOContainer *container = giommu->container;
-    IOMMUTLBEntry *iotlb = data;
-    MemoryRegion *mr;
-    hwaddr xlat;
-    hwaddr len = iotlb->addr_mask + 1;
-    void *vaddr;
-    int ret;
-
-    DPRINTF("iommu map @ %"HWADDR_PRIx" - %"HWADDR_PRIx"\n",
-            iotlb->iova, iotlb->iova + iotlb->addr_mask);
-
-    /*
-     * The IOMMU TLB entry we have just covers translation through
-     * this IOMMU to its immediate target.  We need to translate
-     * it the rest of the way through to memory.
-     */
-    mr = address_space_translate(&address_space_memory,
-                                 iotlb->translated_addr,
-                                 &xlat, &len, iotlb->perm & IOMMU_WO);
-    if (!memory_region_is_ram(mr)) {
-        DPRINTF("iommu map to non memory area %"HWADDR_PRIx"\n",
-                xlat);
-        return;
-    }
-    /*
-     * Translation truncates length to the IOMMU page size,
-     * check that it did not truncate too much.
-     */
-    if (len & iotlb->addr_mask) {
-        DPRINTF("iommu has granularity incompatible with target AS\n");
-        return;
-    }
-
-    if ((iotlb->perm & IOMMU_RW) != IOMMU_NONE) {
-        vaddr = memory_region_get_ram_ptr(mr) + xlat;
-
-        ret = vfio_dma_map(container, iotlb->iova,
-                           iotlb->addr_mask + 1, vaddr,
-                           !(iotlb->perm & IOMMU_WO) || mr->readonly);
-        if (ret) {
-            error_report("vfio_dma_map(%p, 0x%"HWADDR_PRIx", "
-                         "0x%"HWADDR_PRIx", %p) = %d (%m)",
-                         container, iotlb->iova,
-                         iotlb->addr_mask + 1, vaddr, ret);
-        }
-    } else {
-        ret = vfio_dma_unmap(container, iotlb->iova, iotlb->addr_mask + 1);
-        if (ret) {
-            error_report("vfio_dma_unmap(%p, 0x%"HWADDR_PRIx", "
-                         "0x%"HWADDR_PRIx") = %d (%m)",
-                         container, iotlb->iova,
-                         iotlb->addr_mask + 1, ret);
-        }
-    }
-}
-
 static void vfio_listener_region_add(MemoryListener *listener,
                                      MemoryRegionSection *section)
 {
     VFIOContainer *container = container_of(listener, VFIOContainer,
                                             iommu_data.type1.listener);
     hwaddr iova, end;
-    Int128 llend;
     void *vaddr;
     int ret;
+
+    assert(!memory_region_is_iommu(section->mr));
 
     if (vfio_listener_skipped_section(section)) {
         DPRINTF("SKIPPING region_add %"HWADDR_PRIx" - %"PRIx64"\n",
@@ -2557,65 +2268,21 @@ static void vfio_listener_region_add(MemoryListener *listener,
     }
 
     iova = TARGET_PAGE_ALIGN(section->offset_within_address_space);
-    llend = int128_make64(section->offset_within_address_space);
-    llend = int128_add(llend, section->size);
-    llend = int128_and(llend, int128_exts64(TARGET_PAGE_MASK));
+    end = (section->offset_within_address_space + int128_get64(section->size)) &
+          TARGET_PAGE_MASK;
 
-    if (int128_ge(int128_make64(iova), llend)) {
+    if (iova >= end) {
         return;
     }
 
-    memory_region_ref(section->mr);
-
-    if (memory_region_is_iommu(section->mr)) {
-        VFIOGuestIOMMU *giommu;
-
-        DPRINTF("region_add [iommu] %"HWADDR_PRIx" - %"HWADDR_PRIx"\n",
-                iova, int128_get64(int128_sub(llend, int128_one())));
-        /*
-         * FIXME: We should do some checking to see if the
-         * capabilities of the host VFIO IOMMU are adequate to model
-         * the guest IOMMU
-         *
-         * FIXME: For VFIO iommu types which have KVM acceleration to
-         * avoid bouncing all map/unmaps through qemu this way, this
-         * would be the right place to wire that up (tell the KVM
-         * device emulation the VFIO iommu handles to use).
-         */
-        /*
-         * This assumes that the guest IOMMU is empty of
-         * mappings at this point.
-         *
-         * One way of doing this is:
-         * 1. Avoid sharing IOMMUs between emulated devices or different
-         * IOMMU groups.
-         * 2. Implement VFIO_IOMMU_ENABLE in the host kernel to fail if
-         * there are some mappings in IOMMU.
-         *
-         * VFIO on SPAPR does that. Other IOMMU models may do that different,
-         * they must make sure there are no existing mappings or
-         * loop through existing mappings to map them into VFIO.
-         */
-        giommu = g_malloc0(sizeof(*giommu));
-        giommu->iommu = section->mr;
-        giommu->container = container;
-        giommu->n.notify = vfio_iommu_map_notify;
-        QLIST_INSERT_HEAD(&container->giommu_list, giommu, giommu_next);
-        memory_region_register_iommu_notifier(giommu->iommu, &giommu->n);
-
-        return;
-    }
-
-    /* Here we assume that memory_region_is_ram(section->mr)==true */
-
-    end = int128_get64(llend);
     vaddr = memory_region_get_ram_ptr(section->mr) +
             section->offset_within_region +
             (iova - section->offset_within_address_space);
 
-    DPRINTF("region_add [ram] %"HWADDR_PRIx" - %"HWADDR_PRIx" [%p]\n",
+    DPRINTF("region_add %"HWADDR_PRIx" - %"HWADDR_PRIx" [%p]\n",
             iova, end - 1, vaddr);
 
+    memory_region_ref(section->mr);
     ret = vfio_dma_map(container, iova, end - iova, vaddr, section->readonly);
     if (ret) {
         error_report("vfio_dma_map(%p, 0x%"HWADDR_PRIx", "
@@ -2657,27 +2324,6 @@ static void vfio_listener_region_del(MemoryListener *listener,
                  (section->offset_within_region & ~TARGET_PAGE_MASK))) {
         error_report("%s received unaligned region", __func__);
         return;
-    }
-
-    if (memory_region_is_iommu(section->mr)) {
-        VFIOGuestIOMMU *giommu;
-
-        QLIST_FOREACH(giommu, &container->giommu_list, giommu_next) {
-            if (giommu->iommu == section->mr) {
-                memory_region_unregister_iommu_notifier(&giommu->n);
-                QLIST_REMOVE(giommu, giommu_next);
-                g_free(giommu);
-                break;
-            }
-        }
-
-        /*
-         * FIXME: We assume the one big unmap below is adequate to
-         * remove any individual page mappings in the IOMMU which
-         * might have been copied into VFIO. This works for a page table
-         * based IOMMU where a big unmap flattens a large range of IO-PTEs.
-         * That may not be true for all IOMMU types.
-         */
     }
 
     iova = TARGET_PAGE_ALIGN(section->offset_within_address_space);
@@ -3628,43 +3274,16 @@ static void vfio_kvm_device_del_group(VFIOGroup *group)
 #endif
 }
 
-static VFIOAddressSpace *vfio_get_address_space(AddressSpace *as)
-{
-    VFIOAddressSpace *space;
-
-    QLIST_FOREACH(space, &vfio_address_spaces, list) {
-        if (space->as == as) {
-            return space;
-        }
-    }
-
-    /* No suitable VFIOAddressSpace, create a new one */
-    space = g_malloc0(sizeof(*space));
-    space->as = as;
-    QLIST_INIT(&space->containers);
-
-    QLIST_INSERT_HEAD(&vfio_address_spaces, space, list);
-
-    return space;
-}
-
-static void vfio_put_address_space(VFIOAddressSpace *space)
-{
-    if (QLIST_EMPTY(&space->containers)) {
-        QLIST_REMOVE(space, list);
-        g_free(space);
-    }
-}
-
-static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+static int vfio_connect_container(VFIOGroup *group)
 {
     VFIOContainer *container;
     int ret, fd;
-    VFIOAddressSpace *space;
 
-    space = vfio_get_address_space(as);
+    if (group->container) {
+        return 0;
+    }
 
-    QLIST_FOREACH(container, &space->containers, next) {
+    QLIST_FOREACH(container, &container_list, next) {
         if (!ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &container->fd)) {
             group->container = container;
             QLIST_INSERT_HEAD(&container->group_list, group, container_next);
@@ -3675,35 +3294,35 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
     fd = qemu_open("/dev/vfio/vfio", O_RDWR);
     if (fd < 0) {
         error_report("vfio: failed to open /dev/vfio/vfio: %m");
-        ret = -errno;
-        goto put_space_exit;
+        return -errno;
     }
 
     ret = ioctl(fd, VFIO_GET_API_VERSION);
     if (ret != VFIO_API_VERSION) {
         error_report("vfio: supported vfio version: %d, "
                      "reported version: %d", VFIO_API_VERSION, ret);
-        ret = -EINVAL;
-        goto close_fd_exit;
+        close(fd);
+        return -EINVAL;
     }
 
     container = g_malloc0(sizeof(*container));
-    container->space = space;
     container->fd = fd;
 
     if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1_IOMMU)) {
         ret = ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &fd);
         if (ret) {
             error_report("vfio: failed to set group container: %m");
-            ret = -errno;
-            goto free_container_exit;
+            g_free(container);
+            close(fd);
+            return -errno;
         }
 
         ret = ioctl(fd, VFIO_SET_IOMMU, VFIO_TYPE1_IOMMU);
         if (ret) {
             error_report("vfio: failed to set iommu for container: %m");
-            ret = -errno;
-            goto free_container_exit;
+            g_free(container);
+            close(fd);
+            return -errno;
         }
 
         container->iommu_data.type1.listener = vfio_memory_listener;
@@ -3714,72 +3333,29 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
 
         if (container->iommu_data.type1.error) {
             ret = container->iommu_data.type1.error;
+            vfio_listener_release(container);
+            g_free(container);
+            close(fd);
             error_report("vfio: memory listener initialization failed for container");
-            goto listener_release_exit;
+            return ret;
         }
 
         container->iommu_data.type1.initialized = true;
 
-    } else if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_IOMMU)) {
-        ret = ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &fd);
-        if (ret) {
-            error_report("vfio: failed to set group container: %m");
-            ret = -errno;
-            goto free_container_exit;
-        }
-
-        ret = ioctl(fd, VFIO_SET_IOMMU, VFIO_SPAPR_TCE_IOMMU);
-        if (ret) {
-            error_report("vfio: failed to set iommu for container: %m");
-            ret = -errno;
-            goto free_container_exit;
-        }
-
-        /*
-         * The host kernel code implementing VFIO_IOMMU_DISABLE is called
-         * when container fd is closed so we do not call it explicitly
-         * in this file.
-         */
-        ret = ioctl(fd, VFIO_IOMMU_ENABLE);
-        if (ret) {
-            error_report("vfio: failed to enable container: %m");
-            ret = -errno;
-            goto free_container_exit;
-        }
-
-        container->iommu_data.type1.listener = vfio_memory_listener;
-        container->iommu_data.release = vfio_listener_release;
-
-        memory_listener_register(&container->iommu_data.type1.listener,
-                                 container->space->as);
-
     } else {
         error_report("vfio: No available IOMMU models");
-        ret = -EINVAL;
-        goto free_container_exit;
+        g_free(container);
+        close(fd);
+        return -EINVAL;
     }
 
     QLIST_INIT(&container->group_list);
-    QLIST_INSERT_HEAD(&space->containers, container, next);
+    QLIST_INSERT_HEAD(&container_list, container, next);
 
     group->container = container;
     QLIST_INSERT_HEAD(&container->group_list, group, container_next);
 
     return 0;
-
-listener_release_exit:
-    vfio_listener_release(container);
-
-free_container_exit:
-    g_free(container);
-
-close_fd_exit:
-    close(fd);
-
-put_space_exit:
-    vfio_put_address_space(space);
-
-    return ret;
 }
 
 static void vfio_disconnect_container(VFIOGroup *group)
@@ -3795,8 +3371,6 @@ static void vfio_disconnect_container(VFIOGroup *group)
     group->container = NULL;
 
     if (QLIST_EMPTY(&container->group_list)) {
-        VFIOAddressSpace *space = container->space;
-
         if (container->iommu_data.release) {
             container->iommu_data.release(container);
         }
@@ -3804,12 +3378,10 @@ static void vfio_disconnect_container(VFIOGroup *group)
         DPRINTF("vfio_disconnect_container: close container->fd\n");
         close(container->fd);
         g_free(container);
-
-        vfio_put_address_space(space);
     }
 }
 
-static VFIOGroup *vfio_get_group(int groupid, AddressSpace *as)
+static VFIOGroup *vfio_get_group(int groupid)
 {
     VFIOGroup *group;
     char path[32];
@@ -3817,14 +3389,7 @@ static VFIOGroup *vfio_get_group(int groupid, AddressSpace *as)
 
     QLIST_FOREACH(group, &group_list, next) {
         if (group->groupid == groupid) {
-            /* Found it.  Now is it already in the right context? */
-            if (group->container->space->as == as) {
-                return group;
-            } else {
-                error_report("vfio: group %d used in multiple address spaces",
-                             group->groupid);
-                return NULL;
-            }
+            return group;
         }
     }
 
@@ -3834,27 +3399,34 @@ static VFIOGroup *vfio_get_group(int groupid, AddressSpace *as)
     group->fd = qemu_open(path, O_RDWR);
     if (group->fd < 0) {
         error_report("vfio: error opening %s: %m", path);
-        goto free_group_exit;
+        g_free(group);
+        return NULL;
     }
 
     if (ioctl(group->fd, VFIO_GROUP_GET_STATUS, &status)) {
         error_report("vfio: error getting group status: %m");
-        goto close_fd_exit;
+        close(group->fd);
+        g_free(group);
+        return NULL;
     }
 
     if (!(status.flags & VFIO_GROUP_FLAGS_VIABLE)) {
         error_report("vfio: error, group %d is not viable, please ensure "
                      "all devices within the iommu_group are bound to their "
                      "vfio bus driver.", groupid);
-        goto close_fd_exit;
+        close(group->fd);
+        g_free(group);
+        return NULL;
     }
 
     group->groupid = groupid;
     QLIST_INIT(&group->device_list);
 
-    if (vfio_connect_container(group, as)) {
+    if (vfio_connect_container(group)) {
         error_report("vfio: failed to setup container for group %d", groupid);
-        goto close_fd_exit;
+        close(group->fd);
+        g_free(group);
+        return NULL;
     }
 
     if (QLIST_EMPTY(&group_list)) {
@@ -3866,14 +3438,6 @@ static VFIOGroup *vfio_get_group(int groupid, AddressSpace *as)
     vfio_kvm_device_add_group(group);
 
     return group;
-
-close_fd_exit:
-    close(group->fd);
-
-free_group_exit:
-    g_free(group);
-
-    return NULL;
 }
 
 static void vfio_put_group(VFIOGroup *group)
@@ -4082,7 +3646,7 @@ static void vfio_err_notifier_handler(void *opaque)
                  __func__, vdev->host.domain, vdev->host.bus,
                  vdev->host.slot, vdev->host.function);
 
-    vm_stop(RUN_STATE_INTERNAL_ERROR);
+    vm_stop(RUN_STATE_IO_ERROR);
 }
 
 /*
@@ -4204,7 +3768,7 @@ static int vfio_initfn(PCIDevice *pdev)
     DPRINTF("%s(%04x:%02x:%02x.%x) group %d\n", __func__, vdev->host.domain,
             vdev->host.bus, vdev->host.slot, vdev->host.function, groupid);
 
-    group = vfio_get_group(groupid, pci_device_iommu_address_space(pdev));
+    group = vfio_get_group(groupid);
     if (!group) {
         error_report("vfio: failed to get group %d", groupid);
         return -ENOENT;
@@ -4422,47 +3986,3 @@ static void register_vfio_pci_dev_type(void)
 }
 
 type_init(register_vfio_pci_dev_type)
-
-static int vfio_container_do_ioctl(AddressSpace *as, int32_t groupid,
-                                   int req, void *param)
-{
-    VFIOGroup *group;
-    VFIOContainer *container;
-    int ret = -1;
-
-    group = vfio_get_group(groupid, as);
-    if (!group) {
-        error_report("vfio: group %d not registered", groupid);
-        return ret;
-    }
-
-    container = group->container;
-    if (group->container) {
-        ret = ioctl(container->fd, req, param);
-        if (ret < 0) {
-            error_report("vfio: failed to ioctl container: ret=%d, %s",
-                         ret, strerror(errno));
-        }
-    }
-
-    vfio_put_group(group);
-
-    return ret;
-}
-
-int vfio_container_ioctl(AddressSpace *as, int32_t groupid,
-                         int req, void *param)
-{
-    /* We allow only certain ioctls to the container */
-    switch (req) {
-    case VFIO_CHECK_EXTENSION:
-    case VFIO_IOMMU_SPAPR_TCE_GET_INFO:
-        break;
-    default:
-        /* Return an error on unknown requests */
-        error_report("vfio: unsupported ioctl %X", req);
-        return -1;
-    }
-
-    return vfio_container_do_ioctl(as, groupid, req, param);
-}

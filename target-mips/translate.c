@@ -24,11 +24,10 @@
 #include "cpu.h"
 #include "disas/disas.h"
 #include "tcg-op.h"
-#include "exec/cpu_ldst.h"
 
-#include "exec/helper-proto.h"
-#include "exec/helper-gen.h"
-#include "sysemu/kvm.h"
+#include "helper.h"
+#define GEN_HELPER 1
+#include "helper.h"
 
 #define MIPS_DEBUG_DISAS 0
 //#define MIPS_DEBUG_SIGN_EXTENSIONS
@@ -1068,13 +1067,11 @@ typedef struct DisasContext {
     uint32_t opcode;
     int singlestep_enabled;
     int insn_flags;
-    int32_t CP0_Config1;
     /* Routine used to access memory */
     int mem_idx;
     uint32_t hflags, saved_hflags;
     int bstate;
     target_ulong btarget;
-    bool ulri;
 } DisasContext;
 
 enum {
@@ -1923,10 +1920,10 @@ static void gen_flt_ldst (DisasContext *ctx, uint32_t opc, int ft,
     tcg_temp_free(t0);
 }
 
-static void gen_cop1_ldst(DisasContext *ctx, uint32_t op, int rt,
-                          int rs, int16_t imm)
+static void gen_cop1_ldst(CPUMIPSState *env, DisasContext *ctx,
+                          uint32_t op, int rt, int rs, int16_t imm)
 {
-    if (ctx->CP0_Config1 & (1 << CP0C1_FP)) {
+    if (env->CP0_Config1 & (1 << CP0C1_FP)) {
         check_cp1_enabled(ctx);
         gen_flt_ldst(ctx, op, rt, rs, imm);
     } else {
@@ -4218,18 +4215,7 @@ static void gen_mfc0(DisasContext *ctx, TCGv arg, int reg, int sel)
         case 1:
 //            gen_helper_mfc0_contextconfig(arg); /* SmartMIPS ASE */
             rn = "ContextConfig";
-            goto die;
 //            break;
-        case 2:
-            if (ctx->ulri) {
-                tcg_gen_ld32s_tl(arg, cpu_env,
-                                 offsetof(CPUMIPSState,
-                                          active_tc.CP0_UserLocal));
-                rn = "UserLocal";
-            } else {
-                tcg_gen_movi_tl(arg, 0);
-            }
-            break;
         default:
             goto die;
         }
@@ -4816,15 +4802,7 @@ static void gen_mtc0(DisasContext *ctx, TCGv arg, int reg, int sel)
         case 1:
 //            gen_helper_mtc0_contextconfig(cpu_env, arg); /* SmartMIPS ASE */
             rn = "ContextConfig";
-            goto die;
 //            break;
-        case 2:
-            if (ctx->ulri) {
-                tcg_gen_st_tl(arg, cpu_env,
-                              offsetof(CPUMIPSState, active_tc.CP0_UserLocal));
-                rn = "UserLocal";
-            }
-            break;
         default:
             goto die;
         }
@@ -4884,7 +4862,6 @@ static void gen_mtc0(DisasContext *ctx, TCGv arg, int reg, int sel)
         case 0:
             check_insn(ctx, ISA_MIPS32R2);
             gen_helper_mtc0_hwrena(cpu_env, arg);
-            ctx->bstate = BS_STOP;
             rn = "HWREna";
             break;
         default:
@@ -5429,17 +5406,7 @@ static void gen_dmfc0(DisasContext *ctx, TCGv arg, int reg, int sel)
         case 1:
 //            gen_helper_dmfc0_contextconfig(arg); /* SmartMIPS ASE */
             rn = "ContextConfig";
-            goto die;
 //            break;
-        case 2:
-            if (ctx->ulri) {
-                tcg_gen_ld_tl(arg, cpu_env,
-                              offsetof(CPUMIPSState, active_tc.CP0_UserLocal));
-                rn = "UserLocal";
-            } else {
-                tcg_gen_movi_tl(arg, 0);
-            }
-            break;
         default:
             goto die;
         }
@@ -6011,15 +5978,7 @@ static void gen_dmtc0(DisasContext *ctx, TCGv arg, int reg, int sel)
         case 1:
 //           gen_helper_mtc0_contextconfig(cpu_env, arg); /* SmartMIPS ASE */
             rn = "ContextConfig";
-            goto die;
 //           break;
-        case 2:
-            if (ctx->ulri) {
-                tcg_gen_st_tl(arg, cpu_env,
-                              offsetof(CPUMIPSState, active_tc.CP0_UserLocal));
-                rn = "UserLocal";
-            }
-            break;
         default:
             goto die;
         }
@@ -6079,7 +6038,6 @@ static void gen_dmtc0(DisasContext *ctx, TCGv arg, int reg, int sel)
         case 0:
             check_insn(ctx, ISA_MIPS32R2);
             gen_helper_mtc0_hwrena(cpu_env, arg);
-            ctx->bstate = BS_STOP;
             rn = "HWREna";
             break;
         default:
@@ -9102,20 +9060,12 @@ static void gen_rdhwr(DisasContext *ctx, int rt, int rd)
         break;
     case 29:
 #if defined(CONFIG_USER_ONLY)
-        tcg_gen_ld_tl(t0, cpu_env,
-                      offsetof(CPUMIPSState, active_tc.CP0_UserLocal));
+        tcg_gen_ld_tl(t0, cpu_env, offsetof(CPUMIPSState, tls_value));
         gen_store_gpr(t0, rt);
         break;
 #else
-        if ((ctx->hflags & MIPS_HFLAG_CP0) ||
-            (ctx->hflags & MIPS_HFLAG_HWRENA_ULR)) {
-            tcg_gen_ld_tl(t0, cpu_env,
-                          offsetof(CPUMIPSState, active_tc.CP0_UserLocal));
-            gen_store_gpr(t0, rt);
-        } else {
-            generate_exception(ctx, EXCP_RI);
-        }
-        break;
+        /* XXX: Some CPUs implement this in hardware.
+           Not supported yet. */
 #endif
     default:            /* Invalid */
         MIPS_INVAL("rdhwr");
@@ -11840,7 +11790,7 @@ static void decode_micromips32_opc (CPUMIPSState *env, DisasContext *ctx,
         }
         break;
     case POOL32F:
-        if (ctx->CP0_Config1 & (1 << CP0C1_FP)) {
+        if (env->CP0_Config1 & (1 << CP0C1_FP)) {
             minor = ctx->opcode & 0x3f;
             check_cp1_enabled(ctx);
             switch (minor) {
@@ -12354,7 +12304,7 @@ static void decode_micromips32_opc (CPUMIPSState *env, DisasContext *ctx,
     case SDC132:
         mips32_op = OPC_SDC1;
     do_cop1:
-        gen_cop1_ldst(ctx, mips32_op, rt, rs, imm);
+        gen_cop1_ldst(env, ctx, mips32_op, rt, rs, imm);
         break;
     case ADDIUPC:
         {
@@ -14602,7 +14552,7 @@ static void decode_opc (CPUMIPSState *env, DisasContext *ctx)
 
         case OPC_MOVCI:
             check_insn(ctx, ISA_MIPS4 | ISA_MIPS32);
-            if (ctx->CP0_Config1 & (1 << CP0C1_FP)) {
+            if (env->CP0_Config1 & (1 << CP0C1_FP)) {
                 check_cp1_enabled(ctx);
                 gen_movci(ctx, rd, rs, (ctx->opcode >> 18) & 0x7,
                           (ctx->opcode >> 16) & 1);
@@ -15300,9 +15250,6 @@ static void decode_opc (CPUMIPSState *env, DisasContext *ctx)
                     gen_load_gpr(t1, rs);
 
                     gen_helper_dinsv(cpu_gpr[rt], cpu_env, t1, t0);
-
-                    tcg_temp_free(t0);
-                    tcg_temp_free(t1);
                     break;
                 }
             default:            /* Invalid */
@@ -15484,11 +15431,11 @@ static void decode_opc (CPUMIPSState *env, DisasContext *ctx)
     case OPC_LDC1:
     case OPC_SWC1:
     case OPC_SDC1:
-        gen_cop1_ldst(ctx, op, rt, rs, imm);
+        gen_cop1_ldst(env, ctx, op, rt, rs, imm);
         break;
 
     case OPC_CP1:
-        if (ctx->CP0_Config1 & (1 << CP0C1_FP)) {
+        if (env->CP0_Config1 & (1 << CP0C1_FP)) {
             check_cp1_enabled(ctx);
             op1 = MASK_CP1(ctx->opcode);
             switch (op1) {
@@ -15550,7 +15497,7 @@ static void decode_opc (CPUMIPSState *env, DisasContext *ctx)
         break;
 
     case OPC_CP3:
-        if (ctx->CP0_Config1 & (1 << CP0C1_FP)) {
+        if (env->CP0_Config1 & (1 << CP0C1_FP)) {
             check_cp1_enabled(ctx);
             op1 = MASK_CP3(ctx->opcode);
             switch (op1) {
@@ -15658,12 +15605,10 @@ gen_intermediate_code_internal(MIPSCPU *cpu, TranslationBlock *tb,
     ctx.saved_pc = -1;
     ctx.singlestep_enabled = cs->singlestep_enabled;
     ctx.insn_flags = env->insn_flags;
-    ctx.CP0_Config1 = env->CP0_Config1;
     ctx.tb = tb;
     ctx.bstate = BS_NONE;
     /* Restore delay slot state from the tb context.  */
     ctx.hflags = (uint32_t)tb->flags; /* FIXME: maybe use 64 bits here? */
-    ctx.ulri = env->CP0_Config3 & (1 << CP0C3_ULRI);
     restore_cpu_state(env, &ctx);
 #ifdef CONFIG_USER_ONLY
         ctx.mem_idx = MIPS_HFLAG_UM;
@@ -16080,12 +16025,7 @@ void cpu_state_reset(CPUMIPSState *env)
     env->CP0_Random = env->tlb->nb_tlb - 1;
     env->tlb->tlb_in_use = env->tlb->nb_tlb;
     env->CP0_Wired = 0;
-    env->CP0_EBase = (cs->cpu_index & 0x3FF);
-    if (kvm_enabled()) {
-        env->CP0_EBase |= 0x40000000;
-    } else {
-        env->CP0_EBase |= 0x80000000;
-    }
+    env->CP0_EBase = 0x80000000 | (cs->cpu_index & 0x3FF);
     env->CP0_Status = (1 << CP0St_BEV) | (1 << CP0St_ERL);
     /* vectored interrupts not implemented, timer on int 7,
        no performance counters. */
@@ -16102,8 +16042,6 @@ void cpu_state_reset(CPUMIPSState *env)
     }
     /* Count register increments in debug mode, EJTAG version 1 */
     env->CP0_Debug = (1 << CP0DB_CNT) | (0x1 << CP0DB_VER);
-
-    cpu_mips_store_count(env, 1);
 
     if (env->CP0_Config3 & (1 << CP0C3_MT)) {
         int i;

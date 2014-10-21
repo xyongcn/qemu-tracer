@@ -42,13 +42,6 @@ int qcow2_grow_l1_table(BlockDriverState *bs, uint64_t min_size,
     if (min_size <= s->l1_size)
         return 0;
 
-    /* Do a sanity check on min_size before trying to calculate new_l1_size
-     * (this prevents overflows during the while loop for the calculation of
-     * new_l1_size) */
-    if (min_size > INT_MAX / sizeof(uint64_t)) {
-        return -EFBIG;
-    }
-
     if (exact_size) {
         new_l1_size = min_size;
     } else {
@@ -379,8 +372,7 @@ static int coroutine_fn copy_sectors(BlockDriverState *bs,
     BLKDBG_EVENT(bs->file, BLKDBG_COW_READ);
 
     if (!bs->drv) {
-        ret = -ENOMEDIUM;
-        goto out;
+        return -ENOMEDIUM;
     }
 
     /* Call .bdrv_co_readv() directly instead of using the public block-layer
@@ -1368,9 +1360,9 @@ static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
     nb_clusters = MIN(nb_clusters, s->l2_size - l2_index);
 
     for (i = 0; i < nb_clusters; i++) {
-        uint64_t old_l2_entry;
+        uint64_t old_offset;
 
-        old_l2_entry = be64_to_cpu(l2_table[l2_index + i]);
+        old_offset = be64_to_cpu(l2_table[l2_index + i]);
 
         /*
          * Make sure that a discarded area reads back as zeroes for v3 images
@@ -1381,22 +1373,12 @@ static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
          * TODO We might want to use bdrv_get_block_status(bs) here, but we're
          * holding s->lock, so that doesn't work today.
          */
-        switch (qcow2_get_cluster_type(old_l2_entry)) {
-            case QCOW2_CLUSTER_UNALLOCATED:
-                if (!bs->backing_hd) {
-                    continue;
-                }
-                break;
+        if (old_offset & QCOW_OFLAG_ZERO) {
+            continue;
+        }
 
-            case QCOW2_CLUSTER_ZERO:
-                continue;
-
-            case QCOW2_CLUSTER_NORMAL:
-            case QCOW2_CLUSTER_COMPRESSED:
-                break;
-
-            default:
-                abort();
+        if ((old_offset & L2E_OFFSET_MASK) == 0 && !bs->backing_hd) {
+            continue;
         }
 
         /* First remove L2 entries */
@@ -1408,7 +1390,7 @@ static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
         }
 
         /* Then decrease the refcount */
-        qcow2_free_any_clusters(bs, old_l2_entry, 1, type);
+        qcow2_free_any_clusters(bs, old_offset, 1, type);
     }
 
     ret = qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);

@@ -24,7 +24,6 @@
 #include "qemu-common.h"
 
 #define TARGET_LONG_BITS 64
-#define ALIGNED_ONLY
 
 #define CPUArchState struct CPUAlphaState
 

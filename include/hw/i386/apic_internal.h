@@ -98,7 +98,6 @@ struct APICCommonState {
     X86CPU *cpu;
     uint32_t apicbase;
     uint8_t id;
-    uint8_t version;
     uint8_t arb_id;
     uint8_t tpr;
     uint32_t spurious_vec;

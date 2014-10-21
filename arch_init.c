@@ -45,7 +45,6 @@
 #include "hw/audio/pcspk.h"
 #include "migration/page_cache.h"
 #include "qemu/config-file.h"
-#include "qemu/error-report.h"
 #include "qmp-commands.h"
 #include "trace.h"
 #include "exec/cpu-all.h"
@@ -111,8 +110,6 @@ static bool mig_throttle_on;
 static int dirty_rate_high_cnt;
 static void check_guest_throttling(void);
 
-static uint64_t bitmap_sync_count;
-
 /***********************************************************/
 /* ram save/restore */
 
@@ -170,8 +167,11 @@ static struct {
     /* Cache for XBZRLE, Protected by lock. */
     PageCache *cache;
     QemuMutex lock;
-} XBZRLE;
-
+} XBZRLE = {
+    .encoded_buf = NULL,
+    .current_buf = NULL,
+    .cache = NULL,
+};
 /* buffer used for XBZRLE decoding */
 static uint8_t *xbzrle_decoded_buf;
 
@@ -187,44 +187,41 @@ static void XBZRLE_cache_unlock(void)
         qemu_mutex_unlock(&XBZRLE.lock);
 }
 
-/*
- * called from qmp_migrate_set_cache_size in main thread, possibly while
- * a migration is in progress.
- * A running migration maybe using the cache and might finish during this
- * call, hence changes to the cache are protected by XBZRLE.lock().
- */
 int64_t xbzrle_cache_resize(int64_t new_size)
 {
-    PageCache *new_cache;
-    int64_t ret;
+    PageCache *new_cache, *cache_to_free;
 
     if (new_size < TARGET_PAGE_SIZE) {
         return -1;
     }
 
-    XBZRLE_cache_lock();
-
+    /* no need to lock, the current thread holds qemu big lock */
     if (XBZRLE.cache != NULL) {
+        /* check XBZRLE.cache again later */
         if (pow2floor(new_size) == migrate_xbzrle_cache_size()) {
-            goto out_new_size;
+            return pow2floor(new_size);
         }
         new_cache = cache_init(new_size / TARGET_PAGE_SIZE,
                                         TARGET_PAGE_SIZE);
         if (!new_cache) {
-            error_report("Error creating cache");
-            ret = -1;
-            goto out;
+            DPRINTF("Error creating cache\n");
+            return -1;
         }
 
-        cache_fini(XBZRLE.cache);
-        XBZRLE.cache = new_cache;
+        XBZRLE_cache_lock();
+        /* the XBZRLE.cache may have be destroyed, check it again */
+        if (XBZRLE.cache != NULL) {
+            cache_to_free = XBZRLE.cache;
+            XBZRLE.cache = new_cache;
+        } else {
+            cache_to_free = new_cache;
+        }
+        XBZRLE_cache_unlock();
+
+        cache_fini(cache_to_free);
     }
 
-out_new_size:
-    ret = pow2floor(new_size);
-out:
-    XBZRLE_cache_unlock();
-    return ret;
+    return pow2floor(new_size);
 }
 
 /* accounting for migration statistics */
@@ -236,7 +233,6 @@ typedef struct AccountingInfo {
     uint64_t xbzrle_bytes;
     uint64_t xbzrle_pages;
     uint64_t xbzrle_cache_miss;
-    double xbzrle_cache_miss_rate;
     uint64_t xbzrle_overflows;
 } AccountingInfo;
 
@@ -292,11 +288,6 @@ uint64_t xbzrle_mig_pages_cache_miss(void)
     return acct_info.xbzrle_cache_miss;
 }
 
-double xbzrle_mig_cache_miss_rate(void)
-{
-    return acct_info.xbzrle_cache_miss_rate;
-}
-
 uint64_t xbzrle_mig_pages_overflow(void)
 {
     return acct_info.xbzrle_overflows;
@@ -349,7 +340,7 @@ static void xbzrle_cache_zero_page(ram_addr_t current_addr)
 
 #define ENCODING_FLAG_XBZRLE 0x1
 
-static int save_xbzrle_page(QEMUFile *f, uint8_t **current_data,
+static int save_xbzrle_page(QEMUFile *f, uint8_t *current_data,
                             ram_addr_t current_addr, RAMBlock *block,
                             ram_addr_t offset, int cont, bool last_stage)
 {
@@ -357,23 +348,19 @@ static int save_xbzrle_page(QEMUFile *f, uint8_t **current_data,
     uint8_t *prev_cached_page;
 
     if (!cache_is_cached(XBZRLE.cache, current_addr)) {
-        acct_info.xbzrle_cache_miss++;
         if (!last_stage) {
-            if (cache_insert(XBZRLE.cache, current_addr, *current_data) == -1) {
+            if (cache_insert(XBZRLE.cache, current_addr, current_data) == -1) {
                 return -1;
-            } else {
-                /* update *current_data when the page has been
-                   inserted into cache */
-                *current_data = get_cached_data(XBZRLE.cache, current_addr);
             }
         }
+        acct_info.xbzrle_cache_miss++;
         return -1;
     }
 
     prev_cached_page = get_cached_data(XBZRLE.cache, current_addr);
 
     /* save current buffer into memory */
-    memcpy(XBZRLE.current_buf, *current_data, TARGET_PAGE_SIZE);
+    memcpy(XBZRLE.current_buf, current_data, TARGET_PAGE_SIZE);
 
     /* XBZRLE encoding (if there is no overflow) */
     encoded_len = xbzrle_encode_buffer(prev_cached_page, XBZRLE.current_buf,
@@ -386,10 +373,7 @@ static int save_xbzrle_page(QEMUFile *f, uint8_t **current_data,
         DPRINTF("Overflow\n");
         acct_info.xbzrle_overflows++;
         /* update data in the cache */
-        if (!last_stage) {
-            memcpy(prev_cached_page, *current_data, TARGET_PAGE_SIZE);
-            *current_data = prev_cached_page;
-        }
+        memcpy(prev_cached_page, current_data, TARGET_PAGE_SIZE);
         return -1;
     }
 
@@ -495,10 +479,6 @@ static void migration_bitmap_sync(void)
     static int64_t num_dirty_pages_period;
     int64_t end_time;
     int64_t bytes_xfer_now;
-    static uint64_t xbzrle_cache_miss_prev;
-    static uint64_t iterations_prev;
-
-    bitmap_sync_count++;
 
     if (!bytes_xfer_prev) {
         bytes_xfer_prev = ram_bytes_transferred();
@@ -540,113 +520,29 @@ static void migration_bitmap_sync(void)
         } else {
              mig_throttle_on = false;
         }
-        if (migrate_use_xbzrle()) {
-            if (iterations_prev != 0) {
-                acct_info.xbzrle_cache_miss_rate =
-                   (double)(acct_info.xbzrle_cache_miss -
-                            xbzrle_cache_miss_prev) /
-                   (acct_info.iterations - iterations_prev);
-            }
-            iterations_prev = acct_info.iterations;
-            xbzrle_cache_miss_prev = acct_info.xbzrle_cache_miss;
-        }
         s->dirty_pages_rate = num_dirty_pages_period * 1000
             / (end_time - start_time);
         s->dirty_bytes_rate = s->dirty_pages_rate * TARGET_PAGE_SIZE;
         start_time = end_time;
         num_dirty_pages_period = 0;
-        s->dirty_sync_count = bitmap_sync_count;
     }
 }
 
 /*
- * ram_save_page: Send the given page to the stream
- *
- * Returns: Number of bytes written.
- */
-static int ram_save_page(QEMUFile *f, RAMBlock* block, ram_addr_t offset,
-                         bool last_stage)
-{
-    int bytes_sent;
-    int cont;
-    ram_addr_t current_addr;
-    MemoryRegion *mr = block->mr;
-    uint8_t *p;
-    int ret;
-    bool send_async = true;
-
-    cont = (block == last_sent_block) ? RAM_SAVE_FLAG_CONTINUE : 0;
-
-    p = memory_region_get_ram_ptr(mr) + offset;
-
-    /* In doubt sent page as normal */
-    bytes_sent = -1;
-    ret = ram_control_save_page(f, block->offset,
-                           offset, TARGET_PAGE_SIZE, &bytes_sent);
-
-    XBZRLE_cache_lock();
-
-    current_addr = block->offset + offset;
-    if (ret != RAM_SAVE_CONTROL_NOT_SUPP) {
-        if (ret != RAM_SAVE_CONTROL_DELAYED) {
-            if (bytes_sent > 0) {
-                acct_info.norm_pages++;
-            } else if (bytes_sent == 0) {
-                acct_info.dup_pages++;
-            }
-        }
-    } else if (is_zero_range(p, TARGET_PAGE_SIZE)) {
-        acct_info.dup_pages++;
-        bytes_sent = save_block_hdr(f, block, offset, cont,
-                                    RAM_SAVE_FLAG_COMPRESS);
-        qemu_put_byte(f, 0);
-        bytes_sent++;
-        /* Must let xbzrle know, otherwise a previous (now 0'd) cached
-         * page would be stale
-         */
-        xbzrle_cache_zero_page(current_addr);
-    } else if (!ram_bulk_stage && migrate_use_xbzrle()) {
-        bytes_sent = save_xbzrle_page(f, &p, current_addr, block,
-                                      offset, cont, last_stage);
-        if (!last_stage) {
-            /* Can't send this cached data async, since the cache page
-             * might get updated before it gets to the wire
-             */
-            send_async = false;
-        }
-    }
-
-    /* XBZRLE overflow or normal page */
-    if (bytes_sent == -1) {
-        bytes_sent = save_block_hdr(f, block, offset, cont, RAM_SAVE_FLAG_PAGE);
-        if (send_async) {
-            qemu_put_buffer_async(f, p, TARGET_PAGE_SIZE);
-        } else {
-            qemu_put_buffer(f, p, TARGET_PAGE_SIZE);
-        }
-        bytes_sent += TARGET_PAGE_SIZE;
-        acct_info.norm_pages++;
-    }
-
-    XBZRLE_cache_unlock();
-
-    return bytes_sent;
-}
-
-/*
- * ram_find_and_save_block: Finds a page to send and sends it to f
+ * ram_save_block: Writes a page of memory to the stream f
  *
  * Returns:  The number of bytes written.
  *           0 means no dirty pages
  */
 
-static int ram_find_and_save_block(QEMUFile *f, bool last_stage)
+static int ram_save_block(QEMUFile *f, bool last_stage)
 {
     RAMBlock *block = last_seen_block;
     ram_addr_t offset = last_offset;
     bool complete_round = false;
     int bytes_sent = 0;
     MemoryRegion *mr;
+    ram_addr_t current_addr;
 
     if (!block)
         block = QTAILQ_FIRST(&ram_list.blocks);
@@ -667,8 +563,70 @@ static int ram_find_and_save_block(QEMUFile *f, bool last_stage)
                 ram_bulk_stage = false;
             }
         } else {
-            bytes_sent = ram_save_page(f, block, offset, last_stage);
+            int ret;
+            uint8_t *p;
+            bool send_async = true;
+            int cont = (block == last_sent_block) ?
+                RAM_SAVE_FLAG_CONTINUE : 0;
 
+            p = memory_region_get_ram_ptr(mr) + offset;
+
+            /* In doubt sent page as normal */
+            bytes_sent = -1;
+            ret = ram_control_save_page(f, block->offset,
+                               offset, TARGET_PAGE_SIZE, &bytes_sent);
+
+            XBZRLE_cache_lock();
+
+            current_addr = block->offset + offset;
+            if (ret != RAM_SAVE_CONTROL_NOT_SUPP) {
+                if (ret != RAM_SAVE_CONTROL_DELAYED) {
+                    if (bytes_sent > 0) {
+                        acct_info.norm_pages++;
+                    } else if (bytes_sent == 0) {
+                        acct_info.dup_pages++;
+                    }
+                }
+            } else if (is_zero_range(p, TARGET_PAGE_SIZE)) {
+                acct_info.dup_pages++;
+                bytes_sent = save_block_hdr(f, block, offset, cont,
+                                            RAM_SAVE_FLAG_COMPRESS);
+                qemu_put_byte(f, 0);
+                bytes_sent++;
+                /* Must let xbzrle know, otherwise a previous (now 0'd) cached
+                 * page would be stale
+                 */
+                xbzrle_cache_zero_page(current_addr);
+            } else if (!ram_bulk_stage && migrate_use_xbzrle()) {
+                bytes_sent = save_xbzrle_page(f, p, current_addr, block,
+                                              offset, cont, last_stage);
+                if (!last_stage) {
+                    /* We must send exactly what's in the xbzrle cache
+                     * even if the page wasn't xbzrle compressed, so that
+                     * it's right next time.
+                     */
+                    p = get_cached_data(XBZRLE.cache, current_addr);
+
+                    /* Can't send this cached data async, since the cache page
+                     * might get updated before it gets to the wire
+                     */
+                    send_async = false;
+                }
+            }
+
+            /* XBZRLE overflow or normal page */
+            if (bytes_sent == -1) {
+                bytes_sent = save_block_hdr(f, block, offset, cont, RAM_SAVE_FLAG_PAGE);
+                if (send_async) {
+                    qemu_put_buffer_async(f, p, TARGET_PAGE_SIZE);
+                } else {
+                    qemu_put_buffer(f, p, TARGET_PAGE_SIZE);
+                }
+                bytes_sent += TARGET_PAGE_SIZE;
+                acct_info.norm_pages++;
+            }
+
+            XBZRLE_cache_unlock();
             /* if page is unmodified, continue to the next */
             if (bytes_sent > 0) {
                 last_sent_block = block;
@@ -739,6 +697,7 @@ static void migration_end(void)
     XBZRLE_cache_lock();
     if (XBZRLE.cache) {
         cache_fini(XBZRLE.cache);
+        g_free(XBZRLE.cache);
         g_free(XBZRLE.encoded_buf);
         g_free(XBZRLE.current_buf);
         XBZRLE.cache = NULL;
@@ -767,34 +726,37 @@ static void reset_ram_globals(void)
 static int ram_save_setup(QEMUFile *f, void *opaque)
 {
     RAMBlock *block;
-    int64_t ram_bitmap_pages; /* Size of bitmap in pages, including gaps */
+    int64_t ram_pages = last_ram_offset() >> TARGET_PAGE_BITS;
 
+    migration_bitmap = bitmap_new(ram_pages);
+    bitmap_set(migration_bitmap, 0, ram_pages);
+    migration_dirty_pages = ram_pages;
     mig_throttle_on = false;
     dirty_rate_high_cnt = 0;
-    bitmap_sync_count = 0;
 
     if (migrate_use_xbzrle()) {
-        XBZRLE_cache_lock();
+        qemu_mutex_lock_iothread();
         XBZRLE.cache = cache_init(migrate_xbzrle_cache_size() /
                                   TARGET_PAGE_SIZE,
                                   TARGET_PAGE_SIZE);
         if (!XBZRLE.cache) {
-            XBZRLE_cache_unlock();
-            error_report("Error creating cache");
+            qemu_mutex_unlock_iothread();
+            DPRINTF("Error creating cache\n");
             return -1;
         }
-        XBZRLE_cache_unlock();
+        qemu_mutex_init(&XBZRLE.lock);
+        qemu_mutex_unlock_iothread();
 
         /* We prefer not to abort if there is no memory */
         XBZRLE.encoded_buf = g_try_malloc0(TARGET_PAGE_SIZE);
         if (!XBZRLE.encoded_buf) {
-            error_report("Error allocating encoded_buf");
+            DPRINTF("Error allocating encoded_buf\n");
             return -1;
         }
 
         XBZRLE.current_buf = g_try_malloc(TARGET_PAGE_SIZE);
         if (!XBZRLE.current_buf) {
-            error_report("Error allocating current_buf");
+            DPRINTF("Error allocating current_buf\n");
             g_free(XBZRLE.encoded_buf);
             XBZRLE.encoded_buf = NULL;
             return -1;
@@ -807,22 +769,6 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
     qemu_mutex_lock_ramlist();
     bytes_transferred = 0;
     reset_ram_globals();
-
-    ram_bitmap_pages = last_ram_offset() >> TARGET_PAGE_BITS;
-    migration_bitmap = bitmap_new(ram_bitmap_pages);
-    bitmap_set(migration_bitmap, 0, ram_bitmap_pages);
-
-    /*
-     * Count the total number of pages used by ram blocks not including any
-     * gaps due to alignment or unplugs.
-     */
-    migration_dirty_pages = 0;
-    QTAILQ_FOREACH(block, &ram_list.blocks, next) {
-        uint64_t block_pages;
-
-        block_pages = block->length >> TARGET_PAGE_BITS;
-        migration_dirty_pages += block_pages;
-    }
 
     memory_global_dirty_log_start();
     migration_bitmap_sync();
@@ -866,7 +812,7 @@ static int ram_save_iterate(QEMUFile *f, void *opaque)
     while ((ret = qemu_file_rate_limit(f)) == 0) {
         int bytes_sent;
 
-        bytes_sent = ram_find_and_save_block(f, false);
+        bytes_sent = ram_save_block(f, false);
         /* no more blocks to sent */
         if (bytes_sent == 0) {
             break;
@@ -928,7 +874,7 @@ static int ram_save_complete(QEMUFile *f, void *opaque)
     while (true) {
         int bytes_sent;
 
-        bytes_sent = ram_find_and_save_block(f, true);
+        bytes_sent = ram_save_block(f, true);
         /* no more blocks to sent */
         if (bytes_sent == 0) {
             break;
@@ -962,6 +908,7 @@ static uint64_t ram_save_pending(QEMUFile *f, void *opaque, uint64_t max_size)
 
 static int load_xbzrle(QEMUFile *f, ram_addr_t addr, void *host)
 {
+    int ret, rc = 0;
     unsigned int xh_len;
     int xh_flags;
 
@@ -974,25 +921,30 @@ static int load_xbzrle(QEMUFile *f, ram_addr_t addr, void *host)
     xh_len = qemu_get_be16(f);
 
     if (xh_flags != ENCODING_FLAG_XBZRLE) {
-        error_report("Failed to load XBZRLE page - wrong compression!");
+        fprintf(stderr, "Failed to load XBZRLE page - wrong compression!\n");
         return -1;
     }
 
     if (xh_len > TARGET_PAGE_SIZE) {
-        error_report("Failed to load XBZRLE page - len overflow!");
+        fprintf(stderr, "Failed to load XBZRLE page - len overflow!\n");
         return -1;
     }
     /* load data and decode */
     qemu_get_buffer(f, xbzrle_decoded_buf, xh_len);
 
     /* decode RLE */
-    if (xbzrle_decode_buffer(xbzrle_decoded_buf, xh_len, host,
-                             TARGET_PAGE_SIZE) == -1) {
-        error_report("Failed to load XBZRLE page - decode error!");
-        return -1;
+    ret = xbzrle_decode_buffer(xbzrle_decoded_buf, xh_len, host,
+                               TARGET_PAGE_SIZE);
+    if (ret == -1) {
+        fprintf(stderr, "Failed to load XBZRLE page - decode error!\n");
+        rc = -1;
+    } else  if (ret > TARGET_PAGE_SIZE) {
+        fprintf(stderr, "Failed to load XBZRLE page - size %d exceeds %d!\n",
+                ret, TARGET_PAGE_SIZE);
+        abort();
     }
 
-    return 0;
+    return rc;
 }
 
 static inline void *host_from_stream_offset(QEMUFile *f,
@@ -1005,7 +957,7 @@ static inline void *host_from_stream_offset(QEMUFile *f,
 
     if (flags & RAM_SAVE_FLAG_CONTINUE) {
         if (!block) {
-            error_report("Ack, bad migration stream!");
+            fprintf(stderr, "Ack, bad migration stream!\n");
             return NULL;
         }
 
@@ -1021,7 +973,7 @@ static inline void *host_from_stream_offset(QEMUFile *f,
             return memory_region_get_ram_ptr(block->mr) + offset;
     }
 
-    error_report("Can't find block %s!", id);
+    fprintf(stderr, "Can't find block %s!\n", id);
     return NULL;
 }
 
@@ -1040,67 +992,70 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
 {
     ram_addr_t addr;
     int flags, ret = 0;
+    int error;
     static uint64_t seq_iter;
 
     seq_iter++;
 
-    if (version_id != 4) {
-        ret = -EINVAL;
+    if (version_id < 4 || version_id > 4) {
+        return -EINVAL;
     }
 
-    while (!ret) {
+    do {
         addr = qemu_get_be64(f);
 
         flags = addr & ~TARGET_PAGE_MASK;
         addr &= TARGET_PAGE_MASK;
 
         if (flags & RAM_SAVE_FLAG_MEM_SIZE) {
-            /* Synchronize RAM block list */
-            char id[256];
-            ram_addr_t length;
-            ram_addr_t total_ram_bytes = addr;
+            if (version_id == 4) {
+                /* Synchronize RAM block list */
+                char id[256];
+                ram_addr_t length;
+                ram_addr_t total_ram_bytes = addr;
 
-            while (total_ram_bytes) {
-                RAMBlock *block;
-                uint8_t len;
+                while (total_ram_bytes) {
+                    RAMBlock *block;
+                    uint8_t len;
 
-                len = qemu_get_byte(f);
-                qemu_get_buffer(f, (uint8_t *)id, len);
-                id[len] = 0;
-                length = qemu_get_be64(f);
+                    len = qemu_get_byte(f);
+                    qemu_get_buffer(f, (uint8_t *)id, len);
+                    id[len] = 0;
+                    length = qemu_get_be64(f);
 
-                QTAILQ_FOREACH(block, &ram_list.blocks, next) {
-                    if (!strncmp(id, block->idstr, sizeof(id))) {
-                        if (block->length != length) {
-                            error_report("Length mismatch: %s: " RAM_ADDR_FMT
-                                         " in != " RAM_ADDR_FMT, id, length,
-                                         block->length);
-                            ret =  -EINVAL;
+                    QTAILQ_FOREACH(block, &ram_list.blocks, next) {
+                        if (!strncmp(id, block->idstr, sizeof(id))) {
+                            if (block->length != length) {
+                                fprintf(stderr,
+                                        "Length mismatch: %s: " RAM_ADDR_FMT
+                                        " in != " RAM_ADDR_FMT "\n", id, length,
+                                        block->length);
+                                ret =  -EINVAL;
+                                goto done;
+                            }
+                            break;
                         }
-                        break;
                     }
-                }
 
-                if (!block) {
-                    error_report("Unknown ramblock \"%s\", cannot "
-                                 "accept migration", id);
-                    ret = -EINVAL;
-                }
-                if (ret) {
-                    break;
-                }
+                    if (!block) {
+                        fprintf(stderr, "Unknown ramblock \"%s\", cannot "
+                                "accept migration\n", id);
+                        ret = -EINVAL;
+                        goto done;
+                    }
 
-                total_ram_bytes -= length;
+                    total_ram_bytes -= length;
+                }
             }
-        } else if (flags & RAM_SAVE_FLAG_COMPRESS) {
+        }
+
+        if (flags & RAM_SAVE_FLAG_COMPRESS) {
             void *host;
             uint8_t ch;
 
             host = host_from_stream_offset(f, addr, flags);
             if (!host) {
-                error_report("Illegal RAM offset " RAM_ADDR_FMT, addr);
-                ret = -EINVAL;
-                break;
+                return -EINVAL;
             }
 
             ch = qemu_get_byte(f);
@@ -1110,45 +1065,37 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
 
             host = host_from_stream_offset(f, addr, flags);
             if (!host) {
-                error_report("Illegal RAM offset " RAM_ADDR_FMT, addr);
-                ret = -EINVAL;
-                break;
+                return -EINVAL;
             }
 
             qemu_get_buffer(f, host, TARGET_PAGE_SIZE);
         } else if (flags & RAM_SAVE_FLAG_XBZRLE) {
             void *host = host_from_stream_offset(f, addr, flags);
             if (!host) {
-                error_report("Illegal RAM offset " RAM_ADDR_FMT, addr);
-                ret = -EINVAL;
-                break;
+                return -EINVAL;
             }
 
             if (load_xbzrle(f, addr, host) < 0) {
-                error_report("Failed to decompress XBZRLE page at "
-                             RAM_ADDR_FMT, addr);
                 ret = -EINVAL;
-                break;
+                goto done;
             }
         } else if (flags & RAM_SAVE_FLAG_HOOK) {
             ram_control_load_hook(f, flags);
-        } else if (flags & RAM_SAVE_FLAG_EOS) {
-            /* normal exit */
-            break;
-        } else {
-            error_report("Unknown migration flags: %#x", flags);
-            ret = -EINVAL;
-            break;
         }
-        ret = qemu_file_get_error(f);
-    }
+        error = qemu_file_get_error(f);
+        if (error) {
+            ret = error;
+            goto done;
+        }
+    } while (!(flags & RAM_SAVE_FLAG_EOS));
 
+done:
     DPRINTF("Completed load of VM with exit code %d seq iteration "
             "%" PRIu64 "\n", ret, seq_iter);
     return ret;
 }
 
-static SaveVMHandlers savevm_ram_handlers = {
+SaveVMHandlers savevm_ram_handlers = {
     .save_live_setup = ram_save_setup,
     .save_live_iterate = ram_save_iterate,
     .save_live_complete = ram_save_complete,
@@ -1156,12 +1103,6 @@ static SaveVMHandlers savevm_ram_handlers = {
     .load_state = ram_load,
     .cancel = ram_migration_cancel,
 };
-
-void ram_mig_init(void)
-{
-    qemu_mutex_init(&XBZRLE.lock);
-    register_savevm_live(NULL, "ram", 0, 4, &savevm_ram_handlers, NULL);
-}
 
 struct soundhw {
     const char *name;
@@ -1245,11 +1186,12 @@ void select_soundhw(const char *optarg)
 
             if (!c->name) {
                 if (l > 80) {
-                    error_report("Unknown sound card name (too big to show)");
+                    fprintf(stderr,
+                            "Unknown sound card name (too big to show)\n");
                 }
                 else {
-                    error_report("Unknown sound card name `%.*s'",
-                                 (int) l, p);
+                    fprintf(stderr, "Unknown sound card name `%.*s'\n",
+                            (int) l, p);
                 }
                 bad_card = 1;
             }
@@ -1272,13 +1214,13 @@ void audio_init(void)
         if (c->enabled) {
             if (c->isa) {
                 if (!isa_bus) {
-                    error_report("ISA bus not available for %s", c->name);
+                    fprintf(stderr, "ISA bus not available for %s\n", c->name);
                     exit(1);
                 }
                 c->init.init_isa(isa_bus);
             } else {
                 if (!pci_bus) {
-                    error_report("PCI bus not available for %s", c->name);
+                    fprintf(stderr, "PCI bus not available for %s\n", c->name);
                     exit(1);
                 }
                 c->init.init_pci(pci_bus);

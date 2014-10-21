@@ -411,7 +411,8 @@ static const VMStateDescription vmstate_bmdma_current = {
     .name = "ide bmdma_current",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_UINT32(cur_addr, BMDMAState),
         VMSTATE_UINT32(cur_prd_last, BMDMAState),
         VMSTATE_UINT32(cur_prd_addr, BMDMAState),
@@ -424,7 +425,8 @@ static const VMStateDescription vmstate_bmdma_status = {
     .name ="ide bmdma/status",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField []) {
         VMSTATE_UINT8(status, BMDMAState),
         VMSTATE_END_OF_LIST()
     }
@@ -434,8 +436,9 @@ static const VMStateDescription vmstate_bmdma = {
     .name = "ide bmdma",
     .version_id = 3,
     .minimum_version_id = 0,
+    .minimum_version_id_old = 0,
     .pre_save  = ide_bmdma_pre_save,
-    .fields = (VMStateField[]) {
+    .fields      = (VMStateField []) {
         VMSTATE_UINT8(cmd, BMDMAState),
         VMSTATE_UINT8(migration_compat_status, BMDMAState),
         VMSTATE_UINT32(addr, BMDMAState),
@@ -476,8 +479,9 @@ const VMStateDescription vmstate_ide_pci = {
     .name = "ide",
     .version_id = 3,
     .minimum_version_id = 0,
+    .minimum_version_id_old = 0,
     .post_load = ide_pci_post_load,
-    .fields = (VMStateField[]) {
+    .fields      = (VMStateField []) {
         VMSTATE_PCI_DEVICE(parent_obj, PCIIDEState),
         VMSTATE_STRUCT_ARRAY(bmdma, PCIIDEState, 2, 0,
                              vmstate_bmdma, BMDMAState),

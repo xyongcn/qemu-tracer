@@ -19,10 +19,13 @@
 
 #include <math.h>
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "qemu/aes.h"
 #include "qemu/host-utils.h"
-#include "exec/cpu_ldst.h"
+
+#if !defined(CONFIG_USER_ONLY)
+#include "exec/softmmu_exec.h"
+#endif /* !defined(CONFIG_USER_ONLY) */
 
 #define FPU_RC_MASK         0xc00
 #define FPU_RC_NEAR         0x000

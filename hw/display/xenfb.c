@@ -93,12 +93,10 @@ struct XenFB {
 
 static int common_bind(struct common *c)
 {
-    uint64_t mfn;
+    int mfn;
 
-    if (xenstore_read_fe_uint64(&c->xendev, "page-ref", &mfn) == -1)
+    if (xenstore_read_fe_int(&c->xendev, "page-ref", &mfn) == -1)
 	return -1;
-    assert(mfn == (xen_pfn_t)mfn);
-
     if (xenstore_read_fe_int(&c->xendev, "event-channel", &c->xendev.remote_port) == -1)
 	return -1;
 
@@ -109,7 +107,7 @@ static int common_bind(struct common *c)
 	return -1;
 
     xen_be_bind_evtchn(&c->xendev);
-    xen_be_printf(&c->xendev, 1, "ring mfn %"PRIx64", remote-port %d, local-port %d\n",
+    xen_be_printf(&c->xendev, 1, "ring mfn %d, remote-port %d, local-port %d\n",
 		  mfn, c->xendev.remote_port, c->xendev.local_port);
 
     return 0;
@@ -411,7 +409,7 @@ static void input_event(struct XenDevice *xendev)
 
 /* -------------------------------------------------------------------- */
 
-static void xenfb_copy_mfns(int mode, int count, xen_pfn_t *dst, void *src)
+static void xenfb_copy_mfns(int mode, int count, unsigned long *dst, void *src)
 {
     uint32_t *src32 = src;
     uint64_t *src64 = src;
@@ -426,8 +424,8 @@ static int xenfb_map_fb(struct XenFB *xenfb)
     struct xenfb_page *page = xenfb->c.page;
     char *protocol = xenfb->c.xendev.protocol;
     int n_fbdirs;
-    xen_pfn_t *pgmfns = NULL;
-    xen_pfn_t *fbmfns = NULL;
+    unsigned long *pgmfns = NULL;
+    unsigned long *fbmfns = NULL;
     void *map, *pd;
     int mode, ret = -1;
 
@@ -485,8 +483,8 @@ static int xenfb_map_fb(struct XenFB *xenfb)
     n_fbdirs = xenfb->fbpages * mode / 8;
     n_fbdirs = (n_fbdirs + (XC_PAGE_SIZE - 1)) / XC_PAGE_SIZE;
 
-    pgmfns = g_malloc0(sizeof(xen_pfn_t) * n_fbdirs);
-    fbmfns = g_malloc0(sizeof(xen_pfn_t) * xenfb->fbpages);
+    pgmfns = g_malloc0(sizeof(unsigned long) * n_fbdirs);
+    fbmfns = g_malloc0(sizeof(unsigned long) * xenfb->fbpages);
 
     xenfb_copy_mfns(mode, n_fbdirs, pgmfns, pd);
     map = xc_map_foreign_pages(xen_xc, xenfb->c.xendev.dom,

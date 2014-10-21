@@ -160,9 +160,7 @@ void init_paths(const char *prefix)
     base = new_entry("", NULL, pref_buf);
     base = add_dir_maybe(base);
     if (base->num_entries == 0) {
-        g_free(base->pathname);
-        free(base->name);
-        free(base);
+        free (base);
         base = NULL;
     } else {
         set_parents(base, base);

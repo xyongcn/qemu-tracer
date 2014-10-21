@@ -181,10 +181,6 @@ tight_detect_smooth_image24(VncState *vs, int w, int h)
         }
     }
 
-    if (pixels == 0) {
-        return 0;
-    }
-
     /* 95% smooth or more ... */
     if (stats[0] * 33 / pixels >= 95) {
         return 0;
@@ -271,9 +267,7 @@ tight_detect_smooth_image24(VncState *vs, int w, int h)
                 y += w;                                                 \
             }                                                           \
         }                                                               \
-        if (pixels == 0) {                                              \
-            return 0;                                                   \
-        }                                                               \
+                                                                        \
         if ((stats[0] + stats[1]) * 100 / pixels >= 90) {               \
             return 0;                                                   \
         }                                                               \

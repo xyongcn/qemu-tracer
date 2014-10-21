@@ -134,6 +134,7 @@ static VMStateDescription vmstate_highbank_regs = {
     .name = "highbank-regs",
     .version_id = 0,
     .minimum_version_id = 0,
+    .minimum_version_id_old = 0,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(regs, HighbankRegsState, NUM_REGS),
         VMSTATE_END_OF_LIST(),
@@ -199,13 +200,13 @@ enum cxmachines {
  * 32-bit host, set the reg value of memory to 0xf7ff00000 in the
  * device tree and pass -m 2047 to QEMU.
  */
-static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
+static void calxeda_init(QEMUMachineInitArgs *args, enum cxmachines machine)
 {
-    ram_addr_t ram_size = machine->ram_size;
-    const char *cpu_model = machine->cpu_model;
-    const char *kernel_filename = machine->kernel_filename;
-    const char *kernel_cmdline = machine->kernel_cmdline;
-    const char *initrd_filename = machine->initrd_filename;
+    ram_addr_t ram_size = args->ram_size;
+    const char *cpu_model = args->cpu_model;
+    const char *kernel_filename = args->kernel_filename;
+    const char *kernel_cmdline = args->kernel_cmdline;
+    const char *initrd_filename = args->initrd_filename;
     DeviceState *dev = NULL;
     SysBusDevice *busdev;
     qemu_irq pic[128];
@@ -217,7 +218,7 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
     char *sysboot_filename;
 
     if (!cpu_model) {
-        switch (machine_id) {
+        switch (machine) {
         case CALXEDA_HIGHBANK:
             cpu_model = "cortex-a9";
             break;
@@ -274,7 +275,7 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
         }
     }
 
-    switch (machine_id) {
+    switch (machine) {
     case CALXEDA_HIGHBANK:
         dev = qdev_create(NULL, "l2x0");
         qdev_init_nofail(dev);
@@ -359,14 +360,14 @@ static void calxeda_init(MachineState *machine, enum cxmachines machine_id)
     arm_load_kernel(ARM_CPU(first_cpu), &highbank_binfo);
 }
 
-static void highbank_init(MachineState *machine)
+static void highbank_init(QEMUMachineInitArgs *args)
 {
-    calxeda_init(machine, CALXEDA_HIGHBANK);
+    calxeda_init(args, CALXEDA_HIGHBANK);
 }
 
-static void midway_init(MachineState *machine)
+static void midway_init(QEMUMachineInitArgs *args)
 {
-    calxeda_init(machine, CALXEDA_MIDWAY);
+    calxeda_init(args, CALXEDA_MIDWAY);
 }
 
 static QEMUMachine highbank_machine = {

@@ -272,7 +272,8 @@ static const VMStateDescription vmstate_milkymist_memcard = {
     .name = "milkymist-memcard",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
         VMSTATE_INT32(command_write_ptr, MilkymistMemcardState),
         VMSTATE_INT32(response_read_ptr, MilkymistMemcardState),
         VMSTATE_INT32(response_len, MilkymistMemcardState),

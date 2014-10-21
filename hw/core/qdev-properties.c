@@ -587,9 +587,8 @@ static void set_blocksize(Object *obj, Visitor *v, void *opaque,
 
     /* We rely on power-of-2 blocksizes for bitmasks */
     if ((value & (value - 1)) != 0) {
-        error_setg(errp,
-                  "Property %s.%s doesn't take value '%" PRId64 "', it's not a power of 2",
-                  dev->id ?: "", name, (int64_t)value);
+        error_set(errp, QERR_PROPERTY_VALUE_NOT_POWER_OF_2,
+                  dev->id?:"", name, (int64_t)value);
         return;
     }
 
@@ -751,7 +750,6 @@ static void set_prop_arraylen(Object *obj, Visitor *v, void *opaque,
     Property *prop = opaque;
     uint32_t *alenptr = qdev_get_prop_ptr(dev, prop);
     void **arrayptr = (void *)dev + prop->arrayoffset;
-    Error *local_err = NULL;
     void *eltptr;
     const char *arrayname;
     int i;
@@ -765,9 +763,8 @@ static void set_prop_arraylen(Object *obj, Visitor *v, void *opaque,
                    name);
         return;
     }
-    visit_type_uint32(v, alenptr, name, &local_err);
-    if (local_err) {
-        error_propagate(errp, local_err);
+    visit_type_uint32(v, alenptr, name, errp);
+    if (error_is_set(errp)) {
         return;
     }
     if (!*alenptr) {
@@ -804,9 +801,8 @@ static void set_prop_arraylen(Object *obj, Visitor *v, void *opaque,
                             arrayprop->prop.info->get,
                             arrayprop->prop.info->set,
                             array_element_release,
-                            arrayprop, &local_err);
-        if (local_err) {
-            error_propagate(errp, local_err);
+                            arrayprop, errp);
+        if (error_is_set(errp)) {
             return;
         }
     }
@@ -857,7 +853,7 @@ void error_set_from_qdev_prop_error(Error **errp, int ret, DeviceState *dev,
 {
     switch (ret) {
     case -EEXIST:
-        error_setg(errp, "Property '%s.%s' can't take value '%s', it's in use",
+        error_set(errp, QERR_PROPERTY_VALUE_IN_USE,
                   object_get_typename(OBJECT(dev)), prop->name, value);
         break;
     default:
@@ -866,7 +862,7 @@ void error_set_from_qdev_prop_error(Error **errp, int ret, DeviceState *dev,
                   object_get_typename(OBJECT(dev)), prop->name, value);
         break;
     case -ENOENT:
-        error_setg(errp, "Property '%s.%s' can't find value '%s'",
+        error_set(errp, QERR_PROPERTY_VALUE_NOT_FOUND,
                   object_get_typename(OBJECT(dev)), prop->name, value);
         break;
     case 0:
@@ -955,23 +951,6 @@ void qdev_prop_register_global_list(GlobalProperty *props)
     }
 }
 
-int qdev_prop_check_global(void)
-{
-    GlobalProperty *prop;
-    int ret = 0;
-
-    QTAILQ_FOREACH(prop, &global_props, next) {
-        if (!prop->not_used) {
-            continue;
-        }
-        ret = 1;
-        error_report("Warning: \"-global %s.%s=%s\" not used",
-                     prop->driver, prop->property, prop->value);
-
-    }
-    return ret;
-}
-
 void qdev_prop_set_globals_for_type(DeviceState *dev, const char *typename,
                                     Error **errp)
 {
@@ -983,7 +962,6 @@ void qdev_prop_set_globals_for_type(DeviceState *dev, const char *typename,
         if (strcmp(typename, prop->driver) != 0) {
             continue;
         }
-        prop->not_used = false;
         object_property_parse(OBJECT(dev), prop->value, prop->property, &err);
         if (err != NULL) {
             error_propagate(errp, err);

@@ -373,7 +373,8 @@ static const VMStateDescription vmstate_kbd = {
     .name = "pckbd",
     .version_id = 3,
     .minimum_version_id = 3,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 3,
+    .fields      = (VMStateField []) {
         VMSTATE_UINT8(write_cmd, KBDState),
         VMSTATE_UINT8(status, KBDState),
         VMSTATE_UINT8(mode, KBDState),
@@ -461,7 +462,8 @@ static const VMStateDescription vmstate_kbd_isa = {
     .name = "pckbd",
     .version_id = 3,
     .minimum_version_id = 3,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 3,
+    .fields      = (VMStateField []) {
         VMSTATE_STRUCT(kbd, ISAKBDState, 0, vmstate_kbd, KBDState),
         VMSTATE_END_OF_LIST()
     }

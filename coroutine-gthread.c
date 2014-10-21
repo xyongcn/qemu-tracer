@@ -30,14 +30,20 @@ typedef struct {
     CoroutineAction action;
 } CoroutineGThread;
 
-static CompatGMutex coroutine_lock;
-static CompatGCond coroutine_cond;
+static GStaticMutex coroutine_lock = G_STATIC_MUTEX_INIT;
 
 /* GLib 2.31 and beyond deprecated various parts of the thread API,
  * but the new interfaces are not available in older GLib versions
  * so we have to cope with both.
  */
 #if GLIB_CHECK_VERSION(2, 31, 0)
+/* Default zero-initialisation is sufficient for 2.31+ GCond */
+static GCond the_coroutine_cond;
+static GCond *coroutine_cond = &the_coroutine_cond;
+static inline void init_coroutine_cond(void)
+{
+}
+
 /* Awkwardly, the GPrivate API doesn't provide a way to update the
  * GDestroyNotify handler for the coroutine key dynamically. So instead
  * we track whether or not the CoroutineGThread should be freed on
@@ -78,6 +84,11 @@ static inline GThread *create_thread(GThreadFunc func, gpointer data)
 #else
 
 /* Handle older GLib versions */
+static GCond *coroutine_cond;
+static inline void init_coroutine_cond(void)
+{
+    coroutine_cond = g_cond_new();
+}
 
 static GStaticPrivate coroutine_key = G_STATIC_PRIVATE_INIT;
 
@@ -104,25 +115,30 @@ static inline GThread *create_thread(GThreadFunc func, gpointer data)
 
 static void __attribute__((constructor)) coroutine_init(void)
 {
-#if !GLIB_CHECK_VERSION(2, 31, 0)
     if (!g_thread_supported()) {
+#if !GLIB_CHECK_VERSION(2, 31, 0)
         g_thread_init(NULL);
-    }
+#else
+        fprintf(stderr, "glib threading failed to initialize.\n");
+        exit(1);
 #endif
+    }
+
+    init_coroutine_cond();
 }
 
 static void coroutine_wait_runnable_locked(CoroutineGThread *co)
 {
     while (!co->runnable) {
-        g_cond_wait(&coroutine_cond, &coroutine_lock);
+        g_cond_wait(coroutine_cond, g_static_mutex_get_mutex(&coroutine_lock));
     }
 }
 
 static void coroutine_wait_runnable(CoroutineGThread *co)
 {
-    g_mutex_lock(&coroutine_lock);
+    g_static_mutex_lock(&coroutine_lock);
     coroutine_wait_runnable_locked(co);
-    g_mutex_unlock(&coroutine_lock);
+    g_static_mutex_unlock(&coroutine_lock);
 }
 
 static gpointer coroutine_thread(gpointer opaque)
@@ -164,17 +180,17 @@ CoroutineAction qemu_coroutine_switch(Coroutine *from_,
     CoroutineGThread *from = DO_UPCAST(CoroutineGThread, base, from_);
     CoroutineGThread *to = DO_UPCAST(CoroutineGThread, base, to_);
 
-    g_mutex_lock(&coroutine_lock);
+    g_static_mutex_lock(&coroutine_lock);
     from->runnable = false;
     from->action = action;
     to->runnable = true;
     to->action = action;
-    g_cond_broadcast(&coroutine_cond);
+    g_cond_broadcast(coroutine_cond);
 
     if (action != COROUTINE_TERMINATE) {
         coroutine_wait_runnable_locked(from);
     }
-    g_mutex_unlock(&coroutine_lock);
+    g_static_mutex_unlock(&coroutine_lock);
     return from->action;
 }
 

@@ -32,7 +32,7 @@ struct SCLPEventFacility {
     unsigned int receive_mask;
 };
 
-static SCLPEvent cpu_hotplug;
+SCLPEvent cpu_hotplug;
 
 /* return true if any child has event pending set */
 static bool event_pending(SCLPEventFacility *ef)
@@ -319,7 +319,8 @@ static const VMStateDescription vmstate_event_facility = {
     .name = "vmstate-event-facility",
     .version_id = 0,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 0,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT32(receive_mask, SCLPEventFacility),
         VMSTATE_END_OF_LIST()
      }

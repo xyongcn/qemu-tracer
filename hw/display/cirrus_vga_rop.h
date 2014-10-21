@@ -52,7 +52,8 @@ glue(cirrus_bitblt_rop_fwd_, ROP_NAME)(CirrusVGAState *s,
     dstpitch -= bltwidth;
     srcpitch -= bltwidth;
 
-    if (bltheight > 1 && (dstpitch < 0 || srcpitch < 0)) {
+    if (dstpitch < 0 || srcpitch < 0) {
+        /* is 0 valid? srcpitch == 0 could be useful */
         return;
     }
 

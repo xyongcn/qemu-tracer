@@ -28,7 +28,7 @@ static void e500plat_fixup_devtree(PPCE500Params *params, void *fdt)
                      sizeof(compatible));
 }
 
-static void e500plat_init(MachineState *machine)
+static void e500plat_init(QEMUMachineInitArgs *args)
 {
     PPCE500Params params = {
         .pci_first_slot = 0x1,
@@ -43,7 +43,7 @@ static void e500plat_init(MachineState *machine)
         params.mpic_version = OPENPIC_MODEL_FSL_MPIC_20;
     }
 
-    ppce500_init(machine, &params);
+    ppce500_init(args, &params);
 }
 
 static QEMUMachine e500plat_machine = {

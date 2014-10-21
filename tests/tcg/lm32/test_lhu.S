@@ -8,12 +8,10 @@ lhu r3, (r1+0)
 check_r3 0x7e7f
 
 test_name LHU_2
-load r1 data
 lhu r3, (r1+2)
 check_r3 0x7071
 
 test_name LHU_3
-load r1 data
 lhu r3, (r1+-2)
 check_r3 0x7c7d
 
@@ -23,12 +21,10 @@ lhu r3, (r1+0)
 check_r3 0xfeff
 
 test_name LHU_5
-load r1 data_msb
 lhu r3, (r1+2)
 check_r3 0xf0f1
 
 test_name LHU_6
-load r1 data_msb
 lhu r3, (r1+-2)
 check_r3 0xfcfd
 

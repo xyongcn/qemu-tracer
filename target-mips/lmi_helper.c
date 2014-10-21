@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 /* If the byte ordering doesn't matter, i.e. all columns are treated
    identically, then this union can be used directly.  If byte ordering

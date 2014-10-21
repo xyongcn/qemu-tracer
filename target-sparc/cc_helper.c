@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 
 static uint32_t compute_all_flags(CPUSPARCState *env)
 {

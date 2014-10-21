@@ -263,12 +263,6 @@ static void readline_hist_add(ReadLineState *rs, const char *cmdline)
 void readline_add_completion(ReadLineState *rs, const char *str)
 {
     if (rs->nb_completions < READLINE_MAX_COMPLETIONS) {
-        int i;
-        for (i = 0; i < rs->nb_completions; i++) {
-            if (!strcmp(rs->completions[i], str)) {
-                return;
-            }
-        }
         rs->completions[rs->nb_completions++] = g_strdup(str);
     }
 }
@@ -278,11 +272,6 @@ void readline_set_completion_index(ReadLineState *rs, int index)
     rs->completion_index = index;
 }
 
-static int completion_comp(const void *a, const void *b)
-{
-    return strcmp(*(const char **) a, *(const char **) b);
-}
-
 static void readline_completion(ReadLineState *rs)
 {
     int len, i, j, max_width, nb_cols, max_prefix;
@@ -290,7 +279,9 @@ static void readline_completion(ReadLineState *rs)
 
     rs->nb_completions = 0;
 
-    cmdline = g_strndup(rs->cmd_buf, rs->cmd_buf_index);
+    cmdline = g_malloc(rs->cmd_buf_index + 1);
+    memcpy(cmdline, rs->cmd_buf, rs->cmd_buf_index);
+    cmdline[rs->cmd_buf_index] = '\0';
     rs->completion_finder(rs->opaque, cmdline);
     g_free(cmdline);
 
@@ -306,8 +297,6 @@ static void readline_completion(ReadLineState *rs)
         if (len > 0 && rs->completions[0][len - 1] != '/')
             readline_insert_char(rs, ' ');
     } else {
-        qsort(rs->completions, rs->nb_completions, sizeof(char *),
-              completion_comp);
         rs->printf_func(rs->opaque, "\n");
         max_width = 0;
         max_prefix = 0;	
@@ -351,12 +340,6 @@ static void readline_completion(ReadLineState *rs)
     }
 }
 
-static void readline_clear_screen(ReadLineState *rs)
-{
-    rs->printf_func(rs->opaque, "\033[2J\033[1;1H");
-    readline_show_prompt(rs);
-}
-
 /* return true if command handled */
 void readline_handle_byte(ReadLineState *rs, int ch)
 {
@@ -374,9 +357,6 @@ void readline_handle_byte(ReadLineState *rs, int ch)
             break;
         case 9:
             readline_completion(rs);
-            break;
-        case 12:
-            readline_clear_screen(rs);
             break;
         case 10:
         case 13:

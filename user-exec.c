@@ -21,7 +21,6 @@
 #include "disas/disas.h"
 #include "tcg.h"
 #include "qemu/bitops.h"
-#include "exec/cpu_ldst.h"
 
 #undef EAX
 #undef ECX

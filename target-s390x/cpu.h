@@ -126,9 +126,6 @@ typedef struct CPUS390XState {
     uint64_t pfault_compare;
     uint64_t pfault_select;
 
-    uint64_t gbea;
-    uint64_t pp;
-
     CPU_COMMON
 
     /* reset does memset(0) up to here */
@@ -270,9 +267,6 @@ typedef struct CPUS390XState {
 #define FLAG_MASK_64            (PSW_MASK_64     >> 32)
 #define FLAG_MASK_32            0x00001000
 
-/* Control register 0 bits */
-#define CR0_EDAT                0x0000000000800000ULL
-
 static inline int cpu_mmu_index (CPUS390XState *env)
 {
     if (env->psw.mask & PSW_MASK_PSTATE) {
@@ -357,23 +351,25 @@ void s390x_tod_timer(void *opaque);
 void s390x_cpu_timer(void *opaque);
 
 int s390_virtio_hypercall(CPUS390XState *env);
-void s390_virtio_irq(int config_change, uint64_t token);
 
 #ifdef CONFIG_KVM
-void kvm_s390_reset_vcpu(S390CPU *cpu);
-void kvm_s390_virtio_irq(int config_change, uint64_t token);
-void kvm_s390_service_interrupt(uint32_t parm);
-void kvm_s390_vcpu_interrupt(S390CPU *cpu, struct kvm_s390_irq *irq);
-void kvm_s390_floating_interrupt(struct kvm_s390_irq *irq);
-int kvm_s390_inject_flic(struct kvm_s390_irq *irq);
+void kvm_s390_interrupt(S390CPU *cpu, int type, uint32_t code);
+void kvm_s390_virtio_irq(S390CPU *cpu, int config_change, uint64_t token);
+void kvm_s390_interrupt_internal(S390CPU *cpu, int type, uint32_t parm,
+                                 uint64_t parm64, int vm);
 #else
-static inline void kvm_s390_reset_vcpu(S390CPU *cpu)
+static inline void kvm_s390_interrupt(S390CPU *cpu, int type, uint32_t code)
 {
 }
-static inline void kvm_s390_virtio_irq(int config_change, uint64_t token)
+
+static inline void kvm_s390_virtio_irq(S390CPU *cpu, int config_change,
+                                       uint64_t token)
 {
 }
-static inline void kvm_s390_service_interrupt(uint32_t parm)
+
+static inline void kvm_s390_interrupt_internal(S390CPU *cpu, int type,
+                                               uint32_t parm, uint64_t parm64,
+                                               int vm)
 {
 }
 #endif
@@ -928,7 +924,6 @@ struct sysib_322 {
 #define _REGION_ENTRY_LENGTH    0x03      /* region third length              */
 
 #define _SEGMENT_ENTRY_ORIGIN   ~0x7ffULL /* segment table origin             */
-#define _SEGMENT_ENTRY_FC       0x400     /* format control                   */
 #define _SEGMENT_ENTRY_RO       0x200     /* page protection bit              */
 #define _SEGMENT_ENTRY_INV      0x20      /* invalid segment table entry      */
 
@@ -1059,23 +1054,23 @@ void QEMU_NORETURN runtime_exception(CPUS390XState *env, int excp,
                                      uintptr_t retaddr);
 
 #ifdef CONFIG_KVM
-void kvm_s390_io_interrupt(uint16_t subchannel_id,
+void kvm_s390_io_interrupt(S390CPU *cpu, uint16_t subchannel_id,
                            uint16_t subchannel_nr, uint32_t io_int_parm,
                            uint32_t io_int_word);
-void kvm_s390_crw_mchk(void);
+void kvm_s390_crw_mchk(S390CPU *cpu);
 void kvm_s390_enable_css_support(S390CPU *cpu);
 int kvm_s390_assign_subch_ioeventfd(EventNotifier *notifier, uint32_t sch,
                                     int vq, bool assign);
 int kvm_s390_cpu_restart(S390CPU *cpu);
-void kvm_s390_clear_cmma_callback(void *opaque);
 #else
-static inline void kvm_s390_io_interrupt(uint16_t subchannel_id,
+static inline void kvm_s390_io_interrupt(S390CPU *cpu,
+                                        uint16_t subchannel_id,
                                         uint16_t subchannel_nr,
                                         uint32_t io_int_parm,
                                         uint32_t io_int_word)
 {
 }
-static inline void kvm_s390_crw_mchk(void)
+static inline void kvm_s390_crw_mchk(S390CPU *cpu)
 {
 }
 static inline void kvm_s390_enable_css_support(S390CPU *cpu)
@@ -1091,18 +1086,7 @@ static inline int kvm_s390_cpu_restart(S390CPU *cpu)
 {
     return -ENOSYS;
 }
-static inline void kvm_s390_clear_cmma_callback(void *opaque)
-{
-}
 #endif
-
-static inline void cmma_reset(S390CPU *cpu)
-{
-    if (kvm_enabled()) {
-        CPUState *cs = CPU(cpu);
-        kvm_s390_clear_cmma_callback(cs->kvm_state);
-    }
-}
 
 static inline int s390_cpu_restart(S390CPU *cpu)
 {
@@ -1112,9 +1096,29 @@ static inline int s390_cpu_restart(S390CPU *cpu)
     return -ENOSYS;
 }
 
-void s390_io_interrupt(uint16_t subchannel_id, uint16_t subchannel_nr,
-                       uint32_t io_int_parm, uint32_t io_int_word);
-void s390_crw_mchk(void);
+static inline void s390_io_interrupt(S390CPU *cpu,
+                                     uint16_t subchannel_id,
+                                     uint16_t subchannel_nr,
+                                     uint32_t io_int_parm,
+                                     uint32_t io_int_word)
+{
+    if (kvm_enabled()) {
+        kvm_s390_io_interrupt(cpu, subchannel_id, subchannel_nr, io_int_parm,
+                              io_int_word);
+    } else {
+        cpu_inject_io(cpu, subchannel_id, subchannel_nr, io_int_parm,
+                      io_int_word);
+    }
+}
+
+static inline void s390_crw_mchk(S390CPU *cpu)
+{
+    if (kvm_enabled()) {
+        kvm_s390_crw_mchk(cpu);
+    } else {
+        cpu_inject_crw_mchk(cpu);
+    }
+}
 
 static inline int s390_assign_subch_ioeventfd(EventNotifier *notifier,
                                               uint32_t sch_id, int vq,

@@ -166,6 +166,7 @@ static int compare_u64(const void *a, const void *b)
 
 int kvm_arch_init_vcpu(CPUState *cs)
 {
+    struct kvm_vcpu_init init;
     int i, ret, arraylen;
     uint64_t v;
     struct kvm_one_reg r;
@@ -178,22 +179,15 @@ int kvm_arch_init_vcpu(CPUState *cs)
         return -EINVAL;
     }
 
-    /* Determine init features for this CPU */
-    memset(cpu->kvm_init_features, 0, sizeof(cpu->kvm_init_features));
+    init.target = cpu->kvm_target;
+    memset(init.features, 0, sizeof(init.features));
     if (cpu->start_powered_off) {
-        cpu->kvm_init_features[0] |= 1 << KVM_ARM_VCPU_POWER_OFF;
+        init.features[0] = 1 << KVM_ARM_VCPU_POWER_OFF;
     }
-    if (kvm_check_extension(cs->kvm_state, KVM_CAP_ARM_PSCI_0_2)) {
-        cpu->psci_version = 2;
-        cpu->kvm_init_features[0] |= 1 << KVM_ARM_VCPU_PSCI_0_2;
-    }
-
-    /* Do KVM_ARM_VCPU_INIT ioctl */
-    ret = kvm_arm_vcpu_init(cs);
+    ret = kvm_vcpu_ioctl(cs, KVM_ARM_VCPU_INIT, &init);
     if (ret) {
         return ret;
     }
-
     /* Query the kernel to make sure it supports 32 VFP
      * registers: QEMU's "cortex-a15" CPU is always a
      * VFP-D32 core. The simplest way to do this is just
@@ -269,6 +263,13 @@ int kvm_arch_init_vcpu(CPUState *cs)
         ret = -EINVAL;
         goto out;
     }
+
+    /* Save a copy of the initial register values so that we can
+     * feed it back to the kernel on VCPU reset.
+     */
+    cpu->cpreg_reset_values = g_memdup(cpu->cpreg_values,
+                                       cpu->cpreg_array_len *
+                                       sizeof(cpu->cpreg_values[0]));
 
 out:
     g_free(rlp);
@@ -509,11 +510,15 @@ int kvm_arch_get_registers(CPUState *cs)
     return 0;
 }
 
-void kvm_arm_reset_vcpu(ARMCPU *cpu)
+void kvm_arch_reset_vcpu(CPUState *cs)
 {
-    /* Re-init VCPU so that all registers are set to
-     * their respective reset values.
-     */
-    kvm_arm_vcpu_init(CPU(cpu));
-    write_kvmstate_to_list(cpu);
+    /* Feed the kernel back its initial register state */
+    ARMCPU *cpu = ARM_CPU(cs);
+
+    memmove(cpu->cpreg_values, cpu->cpreg_reset_values,
+            cpu->cpreg_array_len * sizeof(cpu->cpreg_values[0]));
+
+    if (!write_list_to_kvmstate(cpu)) {
+        abort();
+    }
 }

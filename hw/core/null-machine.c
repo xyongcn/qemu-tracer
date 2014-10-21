@@ -15,7 +15,7 @@
 #include "hw/hw.h"
 #include "hw/boards.h"
 
-static void machine_none_init(MachineState *machine)
+static void machine_none_init(QEMUMachineInitArgs *args)
 {
 }
 

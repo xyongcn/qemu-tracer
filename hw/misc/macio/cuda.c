@@ -617,7 +617,8 @@ static const VMStateDescription vmstate_cuda_timer = {
     .name = "cuda_timer",
     .version_id = 0,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 0,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT16(latch, CUDATimer),
         VMSTATE_UINT16(counter_value, CUDATimer),
         VMSTATE_INT64(load_time, CUDATimer),
@@ -631,7 +632,8 @@ static const VMStateDescription vmstate_cuda = {
     .name = "cuda",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
         VMSTATE_UINT8(a, CUDAState),
         VMSTATE_UINT8(b, CUDAState),
         VMSTATE_UINT8(dira, CUDAState),

@@ -19,7 +19,6 @@
  */
 
 #include "qemu-common.h"
-#include "qemu/error-report.h"
 #include "hw/usb.h"
 #include "hw/usb/desc.h"
 #include "sysemu/bt.h"
@@ -507,14 +506,6 @@ static int usb_bt_initfn(USBDevice *dev)
 
     usb_desc_create_serial(dev);
     usb_desc_init(dev);
-    s->dev.opaque = s;
-    if (!s->hci) {
-        s->hci = bt_new_hci(qemu_find_bt_vlan(0));
-    }
-    s->hci->opaque = s;
-    s->hci->evt_recv = usb_bt_out_hci_packet_event;
-    s->hci->acl_recv = usb_bt_out_hci_packet_acl;
-    usb_bt_handle_reset(&s->dev);
     s->intr = usb_ep_get(dev, USB_TOKEN_IN, USB_EVT_EP);
 
     return 0;
@@ -525,7 +516,6 @@ static USBDevice *usb_bt_init(USBBus *bus, const char *cmdline)
     USBDevice *dev;
     struct USBBtState *s;
     HCIInfo *hci;
-    const char *name = "usb-bt-dongle";
 
     if (*cmdline) {
         hci = hci_init(cmdline);
@@ -535,17 +525,19 @@ static USBDevice *usb_bt_init(USBBus *bus, const char *cmdline)
 
     if (!hci)
         return NULL;
-    dev = usb_create(bus, name);
+    dev = usb_create_simple(bus, "usb-bt-dongle");
     if (!dev) {
-        error_report("Failed to create USB device '%s'", name);
         return NULL;
     }
     s = DO_UPCAST(struct USBBtState, dev, dev);
+    s->dev.opaque = s;
+
     s->hci = hci;
-    if (qdev_init(&dev->qdev) < 0) {
-        error_report("Failed to initialize USB device '%s'", name);
-        return NULL;
-    }
+    s->hci->opaque = s;
+    s->hci->evt_recv = usb_bt_out_hci_packet_event;
+    s->hci->acl_recv = usb_bt_out_hci_packet_acl;
+
+    usb_bt_handle_reset(&s->dev);
 
     return dev;
 }

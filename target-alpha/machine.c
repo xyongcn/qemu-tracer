@@ -72,6 +72,7 @@ static const VMStateDescription vmstate_env = {
     .name = "env",
     .version_id = 1,
     .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
     .fields = vmstate_env_fields,
 };
 
@@ -85,5 +86,6 @@ const VMStateDescription vmstate_alpha_cpu = {
     .name = "cpu",
     .version_id = 1,
     .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
     .fields = vmstate_cpu_fields,
 };

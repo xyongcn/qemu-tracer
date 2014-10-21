@@ -332,7 +332,8 @@ static const VMStateDescription vmstate_microdrive = {
     .name = "microdrive",
     .version_id = 3,
     .minimum_version_id = 0,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 0,
+    .fields      = (VMStateField []) {
         VMSTATE_UINT8(opt, MicroDriveState),
         VMSTATE_UINT8(stat, MicroDriveState),
         VMSTATE_UINT8(pins, MicroDriveState),
@@ -593,7 +594,7 @@ static void microdrive_realize(DeviceState *dev, Error **errp)
 {
     MicroDriveState *md = MICRODRIVE(dev);
 
-    ide_init2(&md->bus, qemu_allocate_irq(md_set_irq, md, 0));
+    ide_init2(&md->bus, qemu_allocate_irqs(md_set_irq, md, 1)[0]);
 }
 
 static void microdrive_init(Object *obj)

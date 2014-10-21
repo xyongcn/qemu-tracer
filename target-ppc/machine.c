@@ -160,11 +160,6 @@ static int cpu_post_load(void *opaque, int version_id)
     CPUPPCState *env = &cpu->env;
     int i;
 
-    /*
-     * We always ignore the source PVR. The user or management
-     * software has to take care of running QEMU in a compatible mode.
-     */
-    env->spr[SPR_PVR] = env->spr_cb[SPR_PVR].default_value;
     env->lr = env->spr[SPR_LR];
     env->ctr = env->spr[SPR_CTR];
     env->xer = env->spr[SPR_XER];
@@ -207,7 +202,8 @@ static const VMStateDescription vmstate_fpu = {
     .name = "cpu/fpu",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_FLOAT64_ARRAY(env.fpr, PowerPCCPU, 32),
         VMSTATE_UINTTL(env.fpscr, PowerPCCPU),
         VMSTATE_END_OF_LIST()
@@ -225,7 +221,8 @@ static const VMStateDescription vmstate_altivec = {
     .name = "cpu/altivec",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_AVR_ARRAY(env.avr, PowerPCCPU, 32),
         VMSTATE_UINT32(env.vscr, PowerPCCPU),
         VMSTATE_END_OF_LIST()
@@ -243,43 +240,12 @@ static const VMStateDescription vmstate_vsx = {
     .name = "cpu/vsx",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_UINT64_ARRAY(env.vsr, PowerPCCPU, 32),
         VMSTATE_END_OF_LIST()
     },
 };
-
-#ifdef TARGET_PPC64
-/* Transactional memory state */
-static bool tm_needed(void *opaque)
-{
-    PowerPCCPU *cpu = opaque;
-    CPUPPCState *env = &cpu->env;
-    return msr_ts;
-}
-
-static const VMStateDescription vmstate_tm = {
-    .name = "cpu/tm",
-    .version_id = 1,
-    .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
-        VMSTATE_UINTTL_ARRAY(env.tm_gpr, PowerPCCPU, 32),
-        VMSTATE_AVR_ARRAY(env.tm_vsr, PowerPCCPU, 64),
-        VMSTATE_UINT64(env.tm_cr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_lr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_ctr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_fpscr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_amr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_ppr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_vrsave, PowerPCCPU),
-        VMSTATE_UINT32(env.tm_vscr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_dscr, PowerPCCPU),
-        VMSTATE_UINT64(env.tm_tar, PowerPCCPU),
-        VMSTATE_END_OF_LIST()
-    },
-};
-#endif
 
 static bool sr_needed(void *opaque)
 {
@@ -296,7 +262,8 @@ static const VMStateDescription vmstate_sr = {
     .name = "cpu/sr",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_UINTTL_ARRAY(env.sr, PowerPCCPU, 32),
         VMSTATE_END_OF_LIST()
     },
@@ -345,7 +312,8 @@ static const VMStateDescription vmstate_slb = {
     .name = "cpu/slb",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_INT32_EQUAL(env.slb_nr, PowerPCCPU),
         VMSTATE_SLB_ARRAY(env.slb, PowerPCCPU, MAX_SLB_ENTRIES),
         VMSTATE_END_OF_LIST()
@@ -357,7 +325,8 @@ static const VMStateDescription vmstate_tlb6xx_entry = {
     .name = "cpu/tlb6xx_entry",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_UINTTL(pte0, ppc6xx_tlb_t),
         VMSTATE_UINTTL(pte1, ppc6xx_tlb_t),
         VMSTATE_UINTTL(EPN, ppc6xx_tlb_t),
@@ -377,7 +346,8 @@ static const VMStateDescription vmstate_tlb6xx = {
     .name = "cpu/tlb6xx",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_INT32_EQUAL(env.nb_tlb, PowerPCCPU),
         VMSTATE_STRUCT_VARRAY_POINTER_INT32(env.tlb.tlb6, PowerPCCPU,
                                             env.nb_tlb,
@@ -392,7 +362,8 @@ static const VMStateDescription vmstate_tlbemb_entry = {
     .name = "cpu/tlbemb_entry",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_UINT64(RPN, ppcemb_tlb_t),
         VMSTATE_UINTTL(EPN, ppcemb_tlb_t),
         VMSTATE_UINTTL(PID, ppcemb_tlb_t),
@@ -423,7 +394,8 @@ static const VMStateDescription vmstate_pbr403 = {
     .name = "cpu/pbr403",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_UINTTL_ARRAY(env.pb, PowerPCCPU, 4),
         VMSTATE_END_OF_LIST()
     },
@@ -433,7 +405,8 @@ static const VMStateDescription vmstate_tlbemb = {
     .name = "cpu/tlb6xx",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_INT32_EQUAL(env.nb_tlb, PowerPCCPU),
         VMSTATE_STRUCT_VARRAY_POINTER_INT32(env.tlb.tlbe, PowerPCCPU,
                                             env.nb_tlb,
@@ -456,7 +429,8 @@ static const VMStateDescription vmstate_tlbmas_entry = {
     .name = "cpu/tlbmas_entry",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_UINT32(mas8, ppcmas_tlb_t),
         VMSTATE_UINT32(mas1, ppcmas_tlb_t),
         VMSTATE_UINT64(mas2, ppcmas_tlb_t),
@@ -477,7 +451,8 @@ static const VMStateDescription vmstate_tlbmas = {
     .name = "cpu/tlbmas",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField[]) {
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
         VMSTATE_INT32_EQUAL(env.nb_tlb, PowerPCCPU),
         VMSTATE_STRUCT_VARRAY_POINTER_INT32(env.tlb.tlbm, PowerPCCPU,
                                             env.nb_tlb,
@@ -495,8 +470,9 @@ const VMStateDescription vmstate_ppc_cpu = {
     .load_state_old = cpu_load_old,
     .pre_save = cpu_pre_save,
     .post_load = cpu_post_load,
-    .fields = (VMStateField[]) {
-        VMSTATE_UNUSED(sizeof(target_ulong)), /* was _EQUAL(env.spr[SPR_PVR]) */
+    .fields      = (VMStateField []) {
+        /* Verify we haven't changed the pvr */
+        VMSTATE_UINTTL_EQUAL(env.spr[SPR_PVR], PowerPCCPU),
 
         /* User mode architected state */
         VMSTATE_UINTTL_ARRAY(env.gpr, PowerPCCPU, 32),
@@ -542,9 +518,6 @@ const VMStateDescription vmstate_ppc_cpu = {
             .needed = sr_needed,
         } , {
 #ifdef TARGET_PPC64
-            .vmsd = &vmstate_tm,
-            .needed = tm_needed,
-        } , {
             .vmsd = &vmstate_slb,
             .needed = slb_needed,
         } , {

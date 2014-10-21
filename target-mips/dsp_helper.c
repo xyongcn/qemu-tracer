@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "exec/helper-proto.h"
+#include "helper.h"
 #include "qemu/bitops.h"
 
 /* As the byte ordering doesn't matter, i.e. all columns are treated

@@ -22,6 +22,7 @@ extern PropertyInfo qdev_prop_bios_chs_trans;
 extern PropertyInfo qdev_prop_drive;
 extern PropertyInfo qdev_prop_netdev;
 extern PropertyInfo qdev_prop_vlan;
+extern PropertyInfo qdev_prop_iothread;
 extern PropertyInfo qdev_prop_pci_devfn;
 extern PropertyInfo qdev_prop_blocksize;
 extern PropertyInfo qdev_prop_pci_host_devaddr;
@@ -142,6 +143,8 @@ extern PropertyInfo qdev_prop_arraylen;
     DEFINE_PROP(_n, _s, _f, qdev_prop_vlan, NICPeers)
 #define DEFINE_PROP_DRIVE(_n, _s, _f) \
     DEFINE_PROP(_n, _s, _f, qdev_prop_drive, BlockDriverState *)
+#define DEFINE_PROP_IOTHREAD(_n, _s, _f)             \
+    DEFINE_PROP(_n, _s, _f, qdev_prop_iothread, IOThread *)
 #define DEFINE_PROP_MACADDR(_n, _s, _f)         \
     DEFINE_PROP(_n, _s, _f, qdev_prop_macaddr, MACAddr)
 #define DEFINE_PROP_LOSTTICKPOLICY(_n, _s, _f, _d) \
@@ -177,7 +180,6 @@ void qdev_prop_set_ptr(DeviceState *dev, const char *name, void *value);
 
 void qdev_prop_register_global(GlobalProperty *prop);
 void qdev_prop_register_global_list(GlobalProperty *props);
-int qdev_prop_check_global(void);
 void qdev_prop_set_globals(DeviceState *dev, Error **errp);
 void qdev_prop_set_globals_for_type(DeviceState *dev, const char *typename,
                                     Error **errp);
@@ -189,8 +191,6 @@ void error_set_from_qdev_prop_error(Error **errp, int ret, DeviceState *dev,
  * field in a struct.
  */
 void qdev_property_add_static(DeviceState *dev, Property *prop, Error **errp);
-
-void qdev_alias_all_properties(DeviceState *target, Object *source);
 
 /**
  * @qdev_prop_set_after_realize:

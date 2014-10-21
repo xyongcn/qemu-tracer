@@ -29,13 +29,6 @@
 #if defined(CONFIG_UUID)
 #include <uuid/uuid.h>
 #endif
-#ifdef __linux__
-#include <linux/fs.h>
-#include <sys/ioctl.h>
-#ifndef FS_NOCOW_FL
-#define FS_NOCOW_FL                     0x00800000 /* Do not cow file */
-#endif
-#endif
 
 /**************************************************************/
 
@@ -745,11 +738,12 @@ static int create_fixed_disk(int fd, uint8_t *buf, int64_t total_size)
     return ret;
 }
 
-static int vpc_create(const char *filename, QemuOpts *opts, Error **errp)
+static int vpc_create(const char *filename, QEMUOptionParameter *options,
+                      Error **errp)
 {
     uint8_t buf[1024];
     VHDFooter *footer = (VHDFooter *) buf;
-    char *disk_type_param;
+    QEMUOptionParameter *disk_type_param;
     int fd, i;
     uint16_t cyls = 0;
     uint8_t heads = 0;
@@ -758,45 +752,27 @@ static int vpc_create(const char *filename, QemuOpts *opts, Error **errp)
     int64_t total_size;
     int disk_type;
     int ret = -EIO;
-    bool nocow = false;
 
     /* Read out options */
-    total_size = qemu_opt_get_size_del(opts, BLOCK_OPT_SIZE, 0);
-    disk_type_param = qemu_opt_get_del(opts, BLOCK_OPT_SUBFMT);
-    if (disk_type_param) {
-        if (!strcmp(disk_type_param, "dynamic")) {
+    total_size = get_option_parameter(options, BLOCK_OPT_SIZE)->value.n;
+
+    disk_type_param = get_option_parameter(options, BLOCK_OPT_SUBFMT);
+    if (disk_type_param && disk_type_param->value.s) {
+        if (!strcmp(disk_type_param->value.s, "dynamic")) {
             disk_type = VHD_DYNAMIC;
-        } else if (!strcmp(disk_type_param, "fixed")) {
+        } else if (!strcmp(disk_type_param->value.s, "fixed")) {
             disk_type = VHD_FIXED;
         } else {
-            ret = -EINVAL;
-            goto out;
+            return -EINVAL;
         }
     } else {
         disk_type = VHD_DYNAMIC;
     }
-    nocow = qemu_opt_get_bool_del(opts, BLOCK_OPT_NOCOW, false);
 
     /* Create the file */
     fd = qemu_open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
     if (fd < 0) {
-        ret = -EIO;
-        goto out;
-    }
-
-    if (nocow) {
-#ifdef __linux__
-        /* Set NOCOW flag to solve performance issue on fs like btrfs.
-         * This is an optimisation. The FS_IOC_SETFLAGS ioctl return value will
-         * be ignored since any failure of this operation should not block the
-         * left work.
-         */
-        int attr;
-        if (ioctl(fd, FS_IOC_GETFLAGS, &attr) == 0) {
-            attr |= FS_NOCOW_FL;
-            ioctl(fd, FS_IOC_SETFLAGS, &attr);
-        }
-#endif
+        return -EIO;
     }
 
     /*
@@ -861,10 +837,8 @@ static int vpc_create(const char *filename, QemuOpts *opts, Error **errp)
         ret = create_fixed_disk(fd, buf, total_size);
     }
 
-fail:
+ fail:
     qemu_close(fd);
-out:
-    g_free(disk_type_param);
     return ret;
 }
 
@@ -892,29 +866,20 @@ static void vpc_close(BlockDriverState *bs)
     error_free(s->migration_blocker);
 }
 
-static QemuOptsList vpc_create_opts = {
-    .name = "vpc-create-opts",
-    .head = QTAILQ_HEAD_INITIALIZER(vpc_create_opts.head),
-    .desc = {
-        {
-            .name = BLOCK_OPT_SIZE,
-            .type = QEMU_OPT_SIZE,
-            .help = "Virtual disk size"
-        },
-        {
-            .name = BLOCK_OPT_SUBFMT,
-            .type = QEMU_OPT_STRING,
-            .help =
-                "Type of virtual hard disk format. Supported formats are "
-                "{dynamic (default) | fixed} "
-        },
-        {
-            .name = BLOCK_OPT_NOCOW,
-            .type = QEMU_OPT_BOOL,
-            .help = "Turn off copy-on-write (valid only on btrfs)"
-        },
-        { /* end of list */ }
-    }
+static QEMUOptionParameter vpc_create_options[] = {
+    {
+        .name = BLOCK_OPT_SIZE,
+        .type = OPT_SIZE,
+        .help = "Virtual disk size"
+    },
+    {
+        .name = BLOCK_OPT_SUBFMT,
+        .type = OPT_STRING,
+        .help =
+            "Type of virtual hard disk format. Supported formats are "
+            "{dynamic (default) | fixed} "
+    },
+    { NULL }
 };
 
 static BlockDriver bdrv_vpc = {
@@ -932,7 +897,7 @@ static BlockDriver bdrv_vpc = {
 
     .bdrv_get_info          = vpc_get_info,
 
-    .create_opts            = &vpc_create_opts,
+    .create_options         = vpc_create_options,
     .bdrv_has_zero_init     = vpc_has_zero_init,
 };
 
