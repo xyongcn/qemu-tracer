@@ -135,7 +135,14 @@ static inline void tlb_flush(CPUState *cpu, int flush_global)
 #define USE_DIRECT_JUMP
 #endif
 
+#define TB_DEFAULT 0
+#define TB_CALL 1
+#define TB_RET 2
+
 struct TranslationBlock {
+	
+	uint8_t type;
+	
     target_ulong pc;   /* simulated PC corresponding to this block (EIP + CS base) */
     target_ulong cs_base; /* CS base for this block */
     uint64_t flags; /* flags defining in which context the code was generated */
