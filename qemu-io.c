@@ -54,6 +54,7 @@ static int openfile(char *name, int flags, int growable, QDict *opts)
 
     if (qemuio_bs) {
         fprintf(stderr, "file open already, try 'help close'\n");
+        QDECREF(opts);
         return 1;
     }
 
@@ -67,7 +68,7 @@ static int openfile(char *name, int flags, int growable, QDict *opts)
             return 1;
         }
     } else {
-        qemuio_bs = bdrv_new("hda", &error_abort);
+        qemuio_bs = bdrv_new("hda");
 
         if (bdrv_open(&qemuio_bs, name, NULL, opts, flags, NULL, &local_err)
             < 0)
@@ -171,6 +172,7 @@ static int open_f(BlockDriverState *bs, int argc, char **argv)
     } else if (optind == argc) {
         return openfile(NULL, flags, growable, opts);
     } else {
+        QDECREF(opts);
         return qemuio_command_usage(&open_cmd);
     }
 }

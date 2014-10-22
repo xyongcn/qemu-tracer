@@ -44,7 +44,7 @@ typedef struct msos_compat_hdr {
 typedef struct msos_compat_func {
     uint8_t  bFirstInterfaceNumber;
     uint8_t  reserved_1;
-    char     compatibleId[8];
+    uint8_t  compatibleId[8];
     uint8_t  subCompatibleId[8];
     uint8_t  reserved_2[6];
 } QEMU_PACKED msos_compat_func;
@@ -59,10 +59,6 @@ static int usb_desc_msos_compat(const USBDesc *desc, uint8_t *dest)
     func = (void *)(dest + length);
     func->bFirstInterfaceNumber = 0;
     func->reserved_1 = 0x01;
-    if (desc->msos->CompatibleID) {
-        snprintf(func->compatibleId, sizeof(func->compatibleId),
-                 "%s", desc->msos->CompatibleID);
-    }
     length += sizeof(*func);
     count++;
 

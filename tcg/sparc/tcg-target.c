@@ -327,20 +327,14 @@ static int target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
 }
 
 /* test if a constant matches the constraint */
-static inline int tcg_target_const_match(tcg_target_long val, TCGType type,
+static inline int tcg_target_const_match(tcg_target_long val,
                                          const TCGArgConstraint *arg_ct)
 {
     int ct = arg_ct->ct;
 
     if (ct & TCG_CT_CONST) {
         return 1;
-    }
-
-    if (type == TCG_TYPE_I32) {
-        val = (int32_t)val;
-    }
-
-    if ((ct & TCG_CT_CONST_ZERO) && val == 0) {
+    } else if ((ct & TCG_CT_CONST_ZERO) && val == 0) {
         return 1;
     } else if ((ct & TCG_CT_CONST_S11) && check_fit_tl(val, 11)) {
         return 1;

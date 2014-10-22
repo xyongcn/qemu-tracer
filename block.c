@@ -332,20 +332,9 @@ void bdrv_register(BlockDriver *bdrv)
 }
 
 /* create a new block device (by default it is empty) */
-BlockDriverState *bdrv_new(const char *device_name, Error **errp)
+BlockDriverState *bdrv_new(const char *device_name)
 {
     BlockDriverState *bs;
-
-    if (bdrv_find(device_name)) {
-        error_setg(errp, "Device with id '%s' already exists",
-                   device_name);
-        return NULL;
-    }
-    if (bdrv_find_node(device_name)) {
-        error_setg(errp, "Device with node-name '%s' already exists",
-                   device_name);
-        return NULL;
-    }
 
     bs = g_malloc0(sizeof(BlockDriverState));
     QLIST_INIT(&bs->dirty_bitmaps);
@@ -799,36 +788,38 @@ static int bdrv_open_flags(BlockDriverState *bs, int flags)
     return open_flags;
 }
 
-static void bdrv_assign_node_name(BlockDriverState *bs,
-                                  const char *node_name,
-                                  Error **errp)
+static int bdrv_assign_node_name(BlockDriverState *bs,
+                                 const char *node_name,
+                                 Error **errp)
 {
     if (!node_name) {
-        return;
+        return 0;
     }
 
     /* empty string node name is invalid */
     if (node_name[0] == '\0') {
         error_setg(errp, "Empty node name");
-        return;
+        return -EINVAL;
     }
 
     /* takes care of avoiding namespaces collisions */
     if (bdrv_find(node_name)) {
         error_setg(errp, "node-name=%s is conflicting with a device id",
                    node_name);
-        return;
+        return -EINVAL;
     }
 
     /* takes care of avoiding duplicates node names */
     if (bdrv_find_node(node_name)) {
         error_setg(errp, "Duplicate node name");
-        return;
+        return -EINVAL;
     }
 
     /* copy node name into the bs and insert it into the graph list */
     pstrcpy(bs->node_name, sizeof(bs->node_name), node_name);
     QTAILQ_INSERT_TAIL(&graph_bdrv_states, bs, node_list);
+
+    return 0;
 }
 
 /*
@@ -863,10 +854,9 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
     trace_bdrv_open_common(bs, filename ?: "", flags, drv->format_name);
 
     node_name = qdict_get_try_str(options, "node-name");
-    bdrv_assign_node_name(bs, node_name, &local_err);
-    if (error_is_set(&local_err)) {
-        error_propagate(errp, local_err);
-        return -EINVAL;
+    ret = bdrv_assign_node_name(bs, node_name, errp);
+    if (ret < 0) {
+        return ret;
     }
     qdict_del(options, "node-name");
 
@@ -1068,14 +1058,14 @@ fail:
  */
 int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
 {
-    char backing_filename[PATH_MAX];
-    int back_flags, ret;
+    char *backing_filename = g_malloc0(PATH_MAX);
+    int back_flags, ret = 0;
     BlockDriver *back_drv = NULL;
     Error *local_err = NULL;
 
     if (bs->backing_hd != NULL) {
         QDECREF(options);
-        return 0;
+        goto free_exit;
     }
 
     /* NULL means an empty set of options */
@@ -1088,10 +1078,9 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
         backing_filename[0] = '\0';
     } else if (bs->backing_file[0] == '\0' && qdict_size(options) == 0) {
         QDECREF(options);
-        return 0;
+        goto free_exit;
     } else {
-        bdrv_get_full_backing_filename(bs, backing_filename,
-                                       sizeof(backing_filename));
+        bdrv_get_full_backing_filename(bs, backing_filename, PATH_MAX);
     }
 
     if (bs->backing_format[0] != '\0') {
@@ -1112,7 +1101,7 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
         error_setg(errp, "Could not open backing file: %s",
                    error_get_pretty(local_err));
         error_free(local_err);
-        return ret;
+        goto free_exit;
     }
 
     if (bs->backing_hd->file) {
@@ -1123,7 +1112,9 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
     /* Recalculate the BlockLimits with the backing file */
     bdrv_refresh_limits(bs);
 
-    return 0;
+free_exit:
+    g_free(backing_filename);
+    return ret;
 }
 
 /*
@@ -1167,6 +1158,7 @@ int bdrv_open_image(BlockDriverState **pbs, const char *filename,
                        bdref_key);
             ret = -EINVAL;
         }
+        QDECREF(image_options);
         goto done;
     }
 
@@ -1180,8 +1172,7 @@ done:
 void bdrv_append_temp_snapshot(BlockDriverState *bs, Error **errp)
 {
     /* TODO: extra byte is a hack to ensure MAX_PATH space on Windows. */
-    char tmp_filename[PATH_MAX + 1];
-
+    char *tmp_filename = g_malloc0(PATH_MAX + 1);
     int64_t total_size;
     BlockDriver *bdrv_qcow2;
     QEMUOptionParameter *create_options;
@@ -1197,15 +1188,15 @@ void bdrv_append_temp_snapshot(BlockDriverState *bs, Error **errp)
     total_size = bdrv_getlength(bs);
     if (total_size < 0) {
         error_setg_errno(errp, -total_size, "Could not get image size");
-        return;
+        goto out;
     }
     total_size &= BDRV_SECTOR_MASK;
 
     /* Create the temporary image */
-    ret = get_tmp_filename(tmp_filename, sizeof(tmp_filename));
+    ret = get_tmp_filename(tmp_filename, PATH_MAX + 1);
     if (ret < 0) {
         error_setg_errno(errp, -ret, "Could not get temporary filename");
-        return;
+        goto out;
     }
 
     bdrv_qcow2 = bdrv_find_format("qcow2");
@@ -1221,7 +1212,7 @@ void bdrv_append_temp_snapshot(BlockDriverState *bs, Error **errp)
                          "'%s': %s", tmp_filename,
                          error_get_pretty(local_err));
         error_free(local_err);
-        return;
+        goto out;
     }
 
     /* Prepare a new options QDict for the temporary file */
@@ -1231,17 +1222,20 @@ void bdrv_append_temp_snapshot(BlockDriverState *bs, Error **errp)
     qdict_put(snapshot_options, "file.filename",
               qstring_from_str(tmp_filename));
 
-    bs_snapshot = bdrv_new("", &error_abort);
+    bs_snapshot = bdrv_new("");
     bs_snapshot->is_temporary = 1;
 
     ret = bdrv_open(&bs_snapshot, NULL, NULL, snapshot_options,
                     bs->open_flags & ~BDRV_O_SNAPSHOT, bdrv_qcow2, &local_err);
     if (ret < 0) {
         error_propagate(errp, local_err);
-        return;
+        goto out;
     }
 
     bdrv_append(bs_snapshot, bs);
+
+out:
+    g_free(tmp_filename);
 }
 
 /*
@@ -1298,7 +1292,7 @@ int bdrv_open(BlockDriverState **pbs, const char *filename,
     if (*pbs) {
         bs = *pbs;
     } else {
-        bs = bdrv_new("", &error_abort);
+        bs = bdrv_new("");
     }
 
     /* NULL means an empty set of options */
@@ -2591,10 +2585,6 @@ static int bdrv_check_byte_request(BlockDriverState *bs, int64_t offset,
 {
     int64_t len;
 
-    if (size > INT_MAX) {
-        return -EIO;
-    }
-
     if (!bdrv_is_inserted(bs))
         return -ENOMEDIUM;
 
@@ -2615,7 +2605,7 @@ static int bdrv_check_byte_request(BlockDriverState *bs, int64_t offset,
 static int bdrv_check_request(BlockDriverState *bs, int64_t sector_num,
                               int nb_sectors)
 {
-    if (nb_sectors < 0 || nb_sectors > INT_MAX / BDRV_SECTOR_SIZE) {
+    if (nb_sectors > INT_MAX / BDRV_SECTOR_SIZE) {
         return -EIO;
     }
 
@@ -2700,10 +2690,6 @@ static int bdrv_rw_co(BlockDriverState *bs, int64_t sector_num, uint8_t *buf,
         .iov_len = nb_sectors * BDRV_SECTOR_SIZE,
     };
 
-    if (nb_sectors < 0 || nb_sectors > INT_MAX / BDRV_SECTOR_SIZE) {
-        return -EINVAL;
-    }
-
     qemu_iovec_init_external(&qiov, &iov, 1);
     return bdrv_prwv_co(bs, sector_num << BDRV_SECTOR_BITS,
                         &qiov, is_write, flags);
@@ -2759,15 +2745,9 @@ int bdrv_write_zeroes(BlockDriverState *bs, int64_t sector_num,
  */
 int bdrv_make_zero(BlockDriverState *bs, BdrvRequestFlags flags)
 {
-    int64_t target_size;
+    int64_t target_size = bdrv_getlength(bs) / BDRV_SECTOR_SIZE;
     int64_t ret, nb_sectors, sector_num = 0;
     int n;
-
-    target_size = bdrv_getlength(bs);
-    if (target_size < 0) {
-        return target_size;
-    }
-    target_size /= BDRV_SECTOR_SIZE;
 
     for (;;) {
         nb_sectors = target_size - sector_num;
@@ -5120,8 +5100,7 @@ bool bdrv_qiov_is_aligned(BlockDriverState *bs, QEMUIOVector *qiov)
     return true;
 }
 
-BdrvDirtyBitmap *bdrv_create_dirty_bitmap(BlockDriverState *bs, int granularity,
-                                          Error **errp)
+BdrvDirtyBitmap *bdrv_create_dirty_bitmap(BlockDriverState *bs, int granularity)
 {
     int64_t bitmap_size;
     BdrvDirtyBitmap *bitmap;
@@ -5130,13 +5109,7 @@ BdrvDirtyBitmap *bdrv_create_dirty_bitmap(BlockDriverState *bs, int granularity,
 
     granularity >>= BDRV_SECTOR_BITS;
     assert(granularity);
-    bitmap_size = bdrv_getlength(bs);
-    if (bitmap_size < 0) {
-        error_setg_errno(errp, -bitmap_size, "could not get length of device");
-        errno = -bitmap_size;
-        return NULL;
-    }
-    bitmap_size >>= BDRV_SECTOR_BITS;
+    bitmap_size = (bdrv_getlength(bs) >> BDRV_SECTOR_BITS);
     bitmap = g_malloc0(sizeof(BdrvDirtyBitmap));
     bitmap->bitmap = hbitmap_alloc(bitmap_size, ffs(granularity) - 1);
     QLIST_INSERT_HEAD(&bs->dirty_bitmaps, bitmap, list);

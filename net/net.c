@@ -952,12 +952,10 @@ void net_host_device_remove(Monitor *mon, const QDict *qdict)
 
     nc = net_hub_find_client_by_name(vlan_id, device);
     if (!nc) {
-        error_report("Host network device '%s' on hub '%d' not found",
-                     device, vlan_id);
         return;
     }
     if (!net_host_check_device(nc->model)) {
-        error_report("invalid host network device '%s'", device);
+        monitor_printf(mon, "invalid host network device %s\n", device);
         return;
     }
     qemu_del_net_client(nc);

@@ -257,7 +257,7 @@ static int target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
 }
 
 /* test if a constant matches the constraint */
-static inline int tcg_target_const_match(tcg_target_long val, TCGType type,
+static inline int tcg_target_const_match(tcg_target_long val,
                                          const TCGArgConstraint *arg_ct)
 {
     int ct = arg_ct->ct;
@@ -1244,7 +1244,7 @@ static inline void tcg_out_tlb_load(TCGContext *s, TCGReg addrlo, TCGReg addrhi,
  * Record the context of a call to the out of line helper code for the slow path
  * for a load or store, so that we can later generate the correct helper code
  */
-static void add_qemu_ldst_label(TCGContext *s, bool is_ld, TCGMemOp opc,
+static void add_qemu_ldst_label(TCGContext *s, int is_ld, TCGMemOp opc,
                                 TCGReg datalo, TCGReg datahi,
                                 TCGReg addrlo, TCGReg addrhi,
                                 int mem_index, uint8_t *raddr,
@@ -1407,7 +1407,8 @@ static void tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *l)
         } else {
             retaddr = TCG_REG_RAX;
             tcg_out_movi(s, TCG_TYPE_PTR, retaddr, (uintptr_t)l->raddr);
-            tcg_out_st(s, TCG_TYPE_PTR, retaddr, TCG_REG_ESP, 0);
+            tcg_out_st(s, TCG_TYPE_PTR, retaddr, TCG_REG_ESP,
+                       TCG_TARGET_CALL_STACK_OFFSET);
         }
     }
 
@@ -1554,7 +1555,7 @@ static void tcg_out_qemu_ld(TCGContext *s, const TCGArg *args, bool is64)
     tcg_out_qemu_ld_direct(s, datalo, datahi, TCG_REG_L1, 0, 0, opc);
 
     /* Record the current context of a load into ldst label */
-    add_qemu_ldst_label(s, true, opc, datalo, datahi, addrlo, addrhi,
+    add_qemu_ldst_label(s, 1, opc, datalo, datahi, addrlo, addrhi,
                         mem_index, s->code_ptr, label_ptr);
 #else
     {
@@ -1685,7 +1686,7 @@ static void tcg_out_qemu_st(TCGContext *s, const TCGArg *args, bool is64)
     tcg_out_qemu_st_direct(s, datalo, datahi, TCG_REG_L1, 0, 0, opc);
 
     /* Record the current context of a store into ldst label */
-    add_qemu_ldst_label(s, false, opc, datalo, datahi, addrlo, addrhi,
+    add_qemu_ldst_label(s, 0, opc, datalo, datahi, addrlo, addrhi,
                         mem_index, s->code_ptr, label_ptr);
 #else
     {

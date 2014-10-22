@@ -369,8 +369,11 @@ static void nbd_accept(void *opaque)
         return;
     }
 
-    if (fd >= 0 && nbd_client_new(exp, fd, nbd_client_closed)) {
+    if (nbd_client_new(exp, fd, nbd_client_closed)) {
         nb_fds++;
+    } else {
+        shutdown(fd, 2);
+        close(fd);
     }
 }
 
@@ -657,8 +660,7 @@ int main(int argc, char **argv)
         drv = NULL;
     }
 
-    bs = bdrv_new("hda", &error_abort);
-
+    bs = bdrv_new("hda");
     srcpath = argv[optind];
     ret = bdrv_open(&bs, srcpath, NULL, NULL, flags, drv, &local_err);
     if (ret < 0) {
