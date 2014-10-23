@@ -68,7 +68,7 @@ static int openfile(char *name, int flags, int growable, QDict *opts)
             return 1;
         }
     } else {
-        qemuio_bs = bdrv_new("hda", &error_abort);
+        qemuio_bs = bdrv_new("hda");
 
         if (bdrv_open(&qemuio_bs, name, NULL, opts, flags, NULL, &local_err)
             < 0)

@@ -438,9 +438,9 @@ static void check_cmd(AHCIState *s, int port)
 
     if ((pr->cmd & PORT_CMD_START) && pr->cmd_issue) {
         for (slot = 0; (slot < 32) && pr->cmd_issue; slot++) {
-            if ((pr->cmd_issue & (1U << slot)) &&
+            if ((pr->cmd_issue & (1 << slot)) &&
                 !handle_cmd(s, port, slot)) {
-                pr->cmd_issue &= ~(1U << slot);
+                pr->cmd_issue &= ~(1 << slot);
             }
         }
     }

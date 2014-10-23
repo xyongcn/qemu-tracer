@@ -57,22 +57,8 @@ static void format_print(void *opaque, const char *name)
     printf(" %s", name);
 }
 
-static void QEMU_NORETURN GCC_FMT_ATTR(1, 2) error_exit(const char *fmt, ...)
-{
-    va_list ap;
-
-    error_printf("qemu-img: ");
-
-    va_start(ap, fmt);
-    error_vprintf(fmt, ap);
-    va_end(ap);
-
-    error_printf("\nTry 'qemu-img --help' for more information\n");
-    exit(EXIT_FAILURE);
-}
-
 /* Please keep in synch with qemu-img.texi */
-static void QEMU_NORETURN help(void)
+static void help(void)
 {
     const char *help_msg =
            "qemu-img version " QEMU_VERSION ", Copyright (c) 2004-2008 Fabrice Bellard\n"
@@ -143,7 +129,7 @@ static void QEMU_NORETURN help(void)
     printf("%s\nSupported formats:", help_msg);
     bdrv_iterate_format(format_print, NULL);
     printf("\n");
-    exit(EXIT_SUCCESS);
+    exit(1);
 }
 
 static int GCC_FMT_ATTR(2, 3) qprintf(bool quiet, const char *fmt, ...)
@@ -276,8 +262,7 @@ static int print_block_option_help(const char *filename, const char *fmt)
     return 0;
 }
 
-static BlockDriverState *bdrv_new_open(const char *id,
-                                       const char *filename,
+static BlockDriverState *bdrv_new_open(const char *filename,
                                        const char *fmt,
                                        int flags,
                                        bool require_io,
@@ -289,7 +274,7 @@ static BlockDriverState *bdrv_new_open(const char *id,
     Error *local_err = NULL;
     int ret;
 
-    bs = bdrv_new(id, &error_abort);
+    bs = bdrv_new("image");
 
     if (fmt) {
         drv = bdrv_find_format(fmt);
@@ -413,7 +398,7 @@ static int img_create(int argc, char **argv)
     }
 
     if (optind >= argc) {
-        error_exit("Expecting image file name");
+        help();
     }
     optind++;
 
@@ -436,7 +421,7 @@ static int img_create(int argc, char **argv)
         img_size = (uint64_t)sval;
     }
     if (optind != argc) {
-        error_exit("Unexpected argument: %s", argv[optind]);
+        help();
     }
 
     bdrv_img_create(filename, fmt, base_filename, base_fmt,
@@ -605,8 +590,7 @@ static int img_check(int argc, char **argv)
             } else if (!strcmp(optarg, "all")) {
                 fix = BDRV_FIX_LEAKS | BDRV_FIX_ERRORS;
             } else {
-                error_exit("Unknown option value for -r "
-                           "(expecting 'leaks' or 'all'): %s", optarg);
+                help();
             }
             break;
         case OPTION_OUTPUT:
@@ -618,7 +602,7 @@ static int img_check(int argc, char **argv)
         }
     }
     if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
+        help();
     }
     filename = argv[optind++];
 
@@ -631,7 +615,7 @@ static int img_check(int argc, char **argv)
         return 1;
     }
 
-    bs = bdrv_new_open("image", filename, fmt, flags, true, quiet);
+    bs = bdrv_new_open(filename, fmt, flags, true, quiet);
     if (!bs) {
         return 1;
     }
@@ -729,7 +713,7 @@ static int img_commit(int argc, char **argv)
         }
     }
     if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
+        help();
     }
     filename = argv[optind++];
 
@@ -740,7 +724,7 @@ static int img_commit(int argc, char **argv)
         return -1;
     }
 
-    bs = bdrv_new_open("image", filename, fmt, flags, true, quiet);
+    bs = bdrv_new_open(filename, fmt, flags, true, quiet);
     if (!bs) {
         return 1;
     }
@@ -975,7 +959,7 @@ static int img_compare(int argc, char **argv)
 
 
     if (optind != argc - 2) {
-        error_exit("Expecting two image file names");
+        help();
     }
     filename1 = argv[optind++];
     filename2 = argv[optind++];
@@ -983,14 +967,14 @@ static int img_compare(int argc, char **argv)
     /* Initialize before goto out */
     qemu_progress_init(progress, 2.0);
 
-    bs1 = bdrv_new_open("image 1", filename1, fmt1, BDRV_O_FLAGS, true, quiet);
+    bs1 = bdrv_new_open(filename1, fmt1, BDRV_O_FLAGS, true, quiet);
     if (!bs1) {
         error_report("Can't open file %s", filename1);
         ret = 2;
         goto out3;
     }
 
-    bs2 = bdrv_new_open("image 2", filename2, fmt2, BDRV_O_FLAGS, true, quiet);
+    bs2 = bdrv_new_open(filename2, fmt2, BDRV_O_FLAGS, true, quiet);
     if (!bs2) {
         error_report("Can't open file %s", filename2);
         ret = 2;
@@ -1291,7 +1275,7 @@ static int img_convert(int argc, char **argv)
     }
 
     if (bs_n < 1) {
-        error_exit("Must specify image file name");
+        help();
     }
 
 
@@ -1308,11 +1292,8 @@ static int img_convert(int argc, char **argv)
 
     total_sectors = 0;
     for (bs_i = 0; bs_i < bs_n; bs_i++) {
-        char *id = bs_n > 1 ? g_strdup_printf("source %d", bs_i)
-                            : g_strdup("source");
-        bs[bs_i] = bdrv_new_open(id, argv[optind + bs_i], fmt, BDRV_O_FLAGS,
-                                 true, quiet);
-        g_free(id);
+        bs[bs_i] = bdrv_new_open(argv[optind + bs_i], fmt, BDRV_O_FLAGS, true,
+                                 quiet);
         if (!bs[bs_i]) {
             error_report("Could not open '%s'", argv[optind + bs_i]);
             ret = -1;
@@ -1435,7 +1416,7 @@ static int img_convert(int argc, char **argv)
         goto out;
     }
 
-    out_bs = bdrv_new_open("target", out_filename, out_fmt, flags, true, quiet);
+    out_bs = bdrv_new_open(out_filename, out_fmt, flags, true, quiet);
     if (!out_bs) {
         ret = -1;
         goto out;
@@ -1818,8 +1799,8 @@ static ImageInfoList *collect_image_info_list(const char *filename,
         }
         g_hash_table_insert(filenames, (gpointer)filename, NULL);
 
-        bs = bdrv_new_open("image", filename, fmt,
-                           BDRV_O_FLAGS | BDRV_O_NO_BACKING, false, false);
+        bs = bdrv_new_open(filename, fmt, BDRV_O_FLAGS | BDRV_O_NO_BACKING,
+                           false, false);
         if (!bs) {
             goto err;
         }
@@ -1901,7 +1882,7 @@ static int img_info(int argc, char **argv)
         }
     }
     if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
+        help();
     }
     filename = argv[optind++];
 
@@ -2065,10 +2046,10 @@ static int img_map(int argc, char **argv)
             break;
         }
     }
-    if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
+    if (optind >= argc) {
+        help();
     }
-    filename = argv[optind];
+    filename = argv[optind++];
 
     if (output && !strcmp(output, "json")) {
         output_format = OFORMAT_JSON;
@@ -2079,7 +2060,7 @@ static int img_map(int argc, char **argv)
         return 1;
     }
 
-    bs = bdrv_new_open("image", filename, fmt, BDRV_O_FLAGS, true, false);
+    bs = bdrv_new_open(filename, fmt, BDRV_O_FLAGS, true, false);
     if (!bs) {
         return 1;
     }
@@ -2157,7 +2138,7 @@ static int img_snapshot(int argc, char **argv)
             return 0;
         case 'l':
             if (action) {
-                error_exit("Cannot mix '-l', '-a', '-c', '-d'");
+                help();
                 return 0;
             }
             action = SNAPSHOT_LIST;
@@ -2165,7 +2146,7 @@ static int img_snapshot(int argc, char **argv)
             break;
         case 'a':
             if (action) {
-                error_exit("Cannot mix '-l', '-a', '-c', '-d'");
+                help();
                 return 0;
             }
             action = SNAPSHOT_APPLY;
@@ -2173,7 +2154,7 @@ static int img_snapshot(int argc, char **argv)
             break;
         case 'c':
             if (action) {
-                error_exit("Cannot mix '-l', '-a', '-c', '-d'");
+                help();
                 return 0;
             }
             action = SNAPSHOT_CREATE;
@@ -2181,7 +2162,7 @@ static int img_snapshot(int argc, char **argv)
             break;
         case 'd':
             if (action) {
-                error_exit("Cannot mix '-l', '-a', '-c', '-d'");
+                help();
                 return 0;
             }
             action = SNAPSHOT_DELETE;
@@ -2194,12 +2175,12 @@ static int img_snapshot(int argc, char **argv)
     }
 
     if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
+        help();
     }
     filename = argv[optind++];
 
     /* Open the image */
-    bs = bdrv_new_open("image", filename, NULL, bdrv_oflags, true, quiet);
+    bs = bdrv_new_open(filename, NULL, bdrv_oflags, true, quiet);
     if (!bs) {
         return 1;
     }
@@ -2307,11 +2288,8 @@ static int img_rebase(int argc, char **argv)
         progress = 0;
     }
 
-    if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
-    }
-    if (!unsafe && !out_baseimg) {
-        error_exit("Must specify backing file (-b) or use unsafe mode (-u)");
+    if ((optind != argc - 1) || (!unsafe && !out_baseimg)) {
+        help();
     }
     filename = argv[optind++];
 
@@ -2331,7 +2309,7 @@ static int img_rebase(int argc, char **argv)
      * Ignore the old backing file for unsafe rebase in case we want to correct
      * the reference to a renamed or moved backing file.
      */
-    bs = bdrv_new_open("image", filename, fmt, flags, true, quiet);
+    bs = bdrv_new_open(filename, fmt, flags, true, quiet);
     if (!bs) {
         return 1;
     }
@@ -2366,7 +2344,7 @@ static int img_rebase(int argc, char **argv)
     } else {
         char backing_name[1024];
 
-        bs_old_backing = bdrv_new("old_backing", &error_abort);
+        bs_old_backing = bdrv_new("old_backing");
         bdrv_get_backing_filename(bs, backing_name, sizeof(backing_name));
         ret = bdrv_open(&bs_old_backing, backing_name, NULL, NULL, BDRV_O_FLAGS,
                         old_backing_drv, &local_err);
@@ -2377,7 +2355,7 @@ static int img_rebase(int argc, char **argv)
             goto out;
         }
         if (out_baseimg[0]) {
-            bs_new_backing = bdrv_new("new_backing", &error_abort);
+            bs_new_backing = bdrv_new("new_backing");
             ret = bdrv_open(&bs_new_backing, out_baseimg, NULL, NULL,
                             BDRV_O_FLAGS, new_backing_drv, &local_err);
             if (ret) {
@@ -2571,7 +2549,7 @@ static int img_resize(int argc, char **argv)
     /* Remove size from argv manually so that negative numbers are not treated
      * as options by getopt. */
     if (argc < 3) {
-        error_exit("Not enough arguments");
+        help();
         return 1;
     }
 
@@ -2598,7 +2576,7 @@ static int img_resize(int argc, char **argv)
         }
     }
     if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
+        help();
     }
     filename = argv[optind++];
 
@@ -2628,8 +2606,7 @@ static int img_resize(int argc, char **argv)
     n = qemu_opt_get_size(param, BLOCK_OPT_SIZE, 0);
     qemu_opts_del(param);
 
-    bs = bdrv_new_open("image", filename, fmt, BDRV_O_FLAGS | BDRV_O_RDWR,
-                       true, quiet);
+    bs = bdrv_new_open(filename, fmt, BDRV_O_FLAGS | BDRV_O_RDWR, true, quiet);
     if (!bs) {
         ret = -1;
         goto out;
@@ -2715,7 +2692,7 @@ static int img_amend(int argc, char **argv)
     }
 
     if (!options) {
-        error_exit("Must specify options (-o)");
+        help();
     }
 
     filename = (optind == argc - 1) ? argv[argc - 1] : NULL;
@@ -2727,11 +2704,10 @@ static int img_amend(int argc, char **argv)
     }
 
     if (optind != argc - 1) {
-        error_exit("Expecting one image file name");
+        help();
     }
 
-    bs = bdrv_new_open("image", filename, fmt,
-                       BDRV_O_FLAGS | BDRV_O_RDWR, true, quiet);
+    bs = bdrv_new_open(filename, fmt, BDRV_O_FLAGS | BDRV_O_RDWR, true, quiet);
     if (!bs) {
         error_report("Could not open image '%s'", filename);
         ret = -1;
@@ -2799,9 +2775,8 @@ int main(int argc, char **argv)
 
     qemu_init_main_loop();
     bdrv_init();
-    if (argc < 2) {
-        error_exit("Not enough arguments");
-    }
+    if (argc < 2)
+        help();
     cmdname = argv[1];
     argc--; argv++;
 
@@ -2813,5 +2788,6 @@ int main(int argc, char **argv)
     }
 
     /* not found */
-    error_exit("Command not found: %s", cmdname);
+    help();
+    return 0;
 }

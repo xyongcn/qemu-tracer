@@ -23,6 +23,8 @@
 #include "qemu/atomic.h"
 #include "sysemu/qtest.h"
 
+#include "qemu/timer.h"
+
 void cpu_loop_exit(CPUState *cpu)
 {
     cpu->current_tb = NULL;
@@ -229,6 +231,19 @@ int cpu_exec(CPUArchState *env)
     uintptr_t next_tb;
     /* This must be volatile so it is not trashed by longjmp() */
     volatile bool have_tb_lock = false;
+    
+    uint8_t lasttbtype=TB_DEFAULT; 
+	bool isoutput=false;
+#ifdef TARGET_I386
+	target_ulong kernel_start,kernel_end,busybox_start,busybox_end,modules_addr;
+	char modulename[64-sizeof(target_ulong)];	
+	
+	if (qemu_loglevel_mask(CPU_LOG_FUNC)) {
+		FILE *addrs_file = fopen("addrs", "r"); 
+		if(fscanf(addrs_file,TARGET_FMT_lx TARGET_FMT_lx TARGET_FMT_lx TARGET_FMT_lx TARGET_FMT_lx,&kernel_start,&kernel_end,&busybox_start,&busybox_end,&modules_addr))
+			fclose(addrs_file); 
+	}
+#endif
 
     if (cpu->halted) {
         if (!cpu_has_work(cpu)) {
@@ -617,13 +632,108 @@ int cpu_exec(CPUArchState *env)
                     qemu_log("Trace %p [" TARGET_FMT_lx "] %s\n",
                              tb->tc_ptr, tb->pc, lookup_symbol(tb->pc));
                 }
+                
+                if (qemu_loglevel_mask(CPU_LOG_FUNC)) { 
+#if defined(TARGET_I386)	
+#ifdef TARGET_X86_64	
+					if(isoutput){
+						if(lasttbtype==TB_CALL){	
+							target_ulong module_core=0;																			
+							if(tb->pc>=kernel_start && tb->pc<=kernel_end)
+								strcpy(modulename,"kernel");					
+							else if(tb->pc>=busybox_start && tb->pc<=busybox_end)
+								strcpy(modulename,"busybox");					
+							else if(tb->pc>kernel_end){							
+								target_ulong next_list,current_module_addr = modules_addr - 4;
+								uint32_t core_size;			
+									
+								cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_list,sizeof(next_list),0);
+								current_module_addr=next_list-4;
+								while(current_module_addr != modules_addr-4){					
+									cpu_memory_rw_debug(cpu,current_module_addr+300,(uint8_t *)&module_core,sizeof(module_core),0);
+									cpu_memory_rw_debug(cpu,current_module_addr+312,(uint8_t *)&core_size,sizeof(core_size),0);		
+									if(tb->pc>=module_core && tb->pc<module_core+core_size){
+										cpu_memory_rw_debug(cpu,current_module_addr+4+2*sizeof(target_ulong),(uint8_t *)&modulename,sizeof(modulename),0);
+										break;
+									}
+									target_ulong next_node;						
+									cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(target_ulong),0);	
+									current_module_addr=next_node-4;
+								}      
+							}else		
+								strcpy(modulename,"");			
+							qemu_log("0x%"PRIx64",0x%"PRIx64",%"PRIx64",%s,%"PRIx64"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cr[3],env->regs[R_ESP],modulename,tb->pc-module_core);	
+						}else if(lasttbtype==TB_RET) 
+							qemu_log("0x%"PRIx64",0x%"PRIx64",%"PRIx64"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cr[3],env->regs[R_ESP]-sizeof(target_ulong));
+						isoutput=false;
+					}
+					if(tb->type!=TB_DEFAULT){
+						lasttbtype=tb->type;	
+						isoutput=true;
+					}								
+#else 			             
+					if(isoutput){
+						target_ulong pid=env->cr[3];
+						if(lasttbtype==TB_CALL){	
+							target_ulong module_core=0;										
+							if(pid==0)
+								strcpy(modulename,"");								
+							else if(tb->pc>=kernel_start && tb->pc<=kernel_end)
+								strcpy(modulename,"kernel");
+							else if(tb->pc>=busybox_start && tb->pc<=busybox_end)
+								strcpy(modulename,"busybox");
+							else{
+								target_ulong next_list,current_module_addr = modules_addr - 4;	
+								uint32_t core_size;
+						
+								cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_list,sizeof(next_list),0);
+								current_module_addr=next_list-4;
+								while(current_module_addr != modules_addr-4){															
+									cpu_memory_rw_debug(cpu,current_module_addr+92+26*sizeof(target_ulong),(uint8_t *)&module_core,sizeof(module_core),0);
+									cpu_memory_rw_debug(cpu,current_module_addr+96+27*sizeof(target_ulong),(uint8_t *)&core_size,sizeof(core_size),0);
+									if(tb->pc>=module_core && tb->pc<module_core+core_size){
+										cpu_memory_rw_debug(cpu,current_module_addr+4+2*sizeof(target_ulong),(uint8_t *)&modulename,sizeof(modulename),0);
+										break;
+									}
+									target_ulong next_node;						
+									cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(uint32_t),0);	
+									current_module_addr=next_node-4;
+								}                   														
+							}			
+							qemu_log("0x%"PRIx64",0x%"PRIx32",%"PRIx32",%s,%"PRIx32"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,env->regs[R_ESP],modulename,tb->pc-module_core);								
+						}else if(lasttbtype==TB_RET) 
+							qemu_log("0x%"PRIx64",0x%"PRIx32",%"PRIx32"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,env->regs[R_ESP]-sizeof(target_ulong));	
+						isoutput=false;
+					}
+					if(tb->type!=TB_DEFAULT){
+						lasttbtype=tb->type;	
+						isoutput=true;
+					}			
+#endif																		
+#elif defined(TARGET_ARM)		
+					if(isoutput){
+						if(lasttbtype==TB_CALL)
+							//qemu_log(TARGET_FMT_lx" "TARGET_FMT_lx" %"PRIx64" %"PRIx64" %"PRIx64" "TARGET_FMT_lx" "TARGET_FMT_lx" "TARGET_FMT_lx"\n",
+							//env->cp15.c13_fcse,env->cp15.c13_context,env->cp15.tpidr_el0,env->cp15.tpidrro_el0,env->cp15.tpidr_el1,env->cp15.c15_threadid,cpu->thread_id,cpu->host_tid);
+							qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->regs[13],tb->pc);
+						else if(lasttbtype==TB_RET)
+							qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->regs[13]);						
+						isoutput=false;
+					}	
+					if(tb->type!=TB_DEFAULT){
+						lasttbtype=tb->type;
+						isoutput=true;
+					}			
+#endif				
+				}
+                
                 /* see if we can patch the calling TB. When the TB
                    spans two pages, we cannot safely do a direct
                    jump. */
-                if (next_tb != 0 && tb->page_addr[1] == -1) {
+                /*if (next_tb != 0 && tb->page_addr[1] == -1) {
                     tb_add_jump((TranslationBlock *)(next_tb & ~TB_EXIT_MASK),
                                 next_tb & TB_EXIT_MASK, tb);
-                }
+                }*/
                 have_tb_lock = false;
                 spin_unlock(&tcg_ctx.tb_ctx.tb_lock);
 

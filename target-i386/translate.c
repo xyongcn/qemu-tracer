@@ -4412,6 +4412,8 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
     int modrm, reg, rm, mod, op, opreg, val;
     target_ulong next_eip, tval;
     int rex_w, rex_r;
+    
+    s->tb->type = TB_DEFAULT;			
 
     if (unlikely(qemu_loglevel_mask(CPU_LOG_TB_OP | CPU_LOG_TB_OP_OPT))) {
         tcg_gen_debug_insn_start(pc_start);
@@ -4938,6 +4940,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
             break;
         case 2: /* call Ev */
             /* XXX: optimize if memory (no 'and' is necessary) */
+            
+			s->tb->type = TB_CALL;
+			
             if (dflag == MO_16) {
                 tcg_gen_ext16u_tl(cpu_T[0], cpu_T[0]);
             }
@@ -4948,6 +4953,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
             gen_eob(s);
             break;
         case 3: /* lcall Ev */
+        
+			s->tb->type = TB_CALL;
+			
             gen_op_ld_v(s, ot, cpu_T[1], cpu_A0);
             gen_add_A0_im(s, 1 << ot);
             gen_op_ld_v(s, MO_16, cpu_T[0], cpu_A0);
@@ -6380,6 +6388,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         /************************/
         /* control */
     case 0xc2: /* ret im */
+    
+		s->tb->type = TB_RET;
+    
         val = cpu_ldsw_code(env, s->pc);
         s->pc += 2;
         ot = gen_pop_T0(s);
@@ -6389,6 +6400,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         gen_eob(s);
         break;
     case 0xc3: /* ret */
+    
+		s->tb->type = TB_RET;
+    
         ot = gen_pop_T0(s);
         gen_pop_update(s, ot);
         /* Note that gen_pop_T0 uses a zero-extending load.  */
@@ -6396,6 +6410,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         gen_eob(s);
         break;
     case 0xca: /* lret im */
+    
+		s->tb->type = TB_RET;
+    
         val = cpu_ldsw_code(env, s->pc);
         s->pc += 2;
     do_lret:
@@ -6421,9 +6438,15 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         gen_eob(s);
         break;
     case 0xcb: /* lret */
+    
+		s->tb->type = TB_RET;
+    
         val = 0;
         goto do_lret;
     case 0xcf: /* iret */
+    
+		s->tb->type = TB_RET;
+    
         gen_svm_check_intercept(s, pc_start, SVM_EXIT_IRET);
         if (!s->pe) {
             /* real mode */
@@ -6447,6 +6470,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         break;
     case 0xe8: /* call im */
         {
+    
+			s->tb->type = TB_CALL;
+    
             if (dflag != MO_16) {
                 tval = (int32_t)insn_get(env, s, MO_32);
             } else {
@@ -6470,6 +6496,9 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
 
             if (CODE64(s))
                 goto illegal_op;
+    
+			s->tb->type = TB_CALL;     
+            
             ot = dflag;
             offset = insn_get(env, s, ot);
             selector = insn_get(env, s, MO_16);
