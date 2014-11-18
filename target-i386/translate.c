@@ -4941,7 +4941,7 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         case 2: /* call Ev */
             /* XXX: optimize if memory (no 'and' is necessary) */
             
-			s->tb->type = TB_CALL;
+		s->tb->type = TB_CALL;
 			
             if (dflag == MO_16) {
                 tcg_gen_ext16u_tl(cpu_T[0], cpu_T[0]);
