@@ -218,5 +218,5 @@ if ARGV[0]
 else
 	directory_path="/mnt/freenas/dyn-trace-log/"
 end
-#Enter.dynamic(directory_path)
+Enter.dynamic(directory_path)
 Enter.dolist()
