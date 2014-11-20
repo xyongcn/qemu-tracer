@@ -55,7 +55,7 @@ vim BUSYBOX/_install/etc/init.d/rcS
 ``` 
 其中bzImage是linux内核编译出的文件，在arch/i386/boot文件夹下，rootfs.img是上一步创建的镜像文件  
 -d 参数指定日志输出项目,对qemu做了一定的修改,并增加了一个选项func可以追踪函数调用  
--D 参数指定日志输出文件
+-D 参数指定日志输出文件  
 针对自动测试的要求，已经写好了脚本，参见configs/scripts/a.sh
 还需要对数据文件进行解析，包括parse.rb linux-3.5.4 x86_32 log result,然后使用self_time.py等脚本再处理，可以参见db-rtl-callgraph的帮助文档 
 
