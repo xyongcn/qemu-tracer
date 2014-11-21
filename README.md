@@ -44,9 +44,14 @@ vim BUSYBOX/_install/etc/init.d/rcS
 	mount -t sysfs none /sys
 	/sbin/mdev -s
 ```
-参见configs/scripts/rcS文件        
+参见configs/scripts/rcS文件  
+
+2.制作rootfs.img镜像  
+cd  BUSYBOX/_install  
+find . | cpio -o --format=newc > BUSYBOX/rootfs.img  
+注意rootfs.img不能生产在当前文件夹下，否则会生产自己的镜像。这里产生的镜像供下一步使用。
                
-2.编写启动脚本  
+3.编写启动脚本  
 首先要在工作的目录下新建一个addrs文件，存有5行地址，分别是内核起始地址，内核结束地址，busybox起始地址，busybox结束地址和内核符号表中modules的地址，可以参见configs/scripts/addrs文件，但需要注意的是每个内核镜像中的地址都不相同，需要自己查询。busybox的地址可以在编译出的busybox_unstripped的符号表中查到（使用nm命令）。还可以使用insert-busybox.rb脚本将busybox符号表导入数据库中。  
 使用以下命令运行qemu 
 ``` 
