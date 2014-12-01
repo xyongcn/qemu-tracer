@@ -4,7 +4,7 @@
 过程中可能需要安装pkg-config、libsdl1.2-dev、libpixman-1-dev、libfdt-dev、libtool等必要软件包  
 ./configure --target-list=i386-softmmu --enable-sdl进行配置，--target-list指定目标机的平台  
 参见./configure --help  
-然后执行make命令
+然后执行make命令。如果是在64位机器上的话，最好使用make ARCH=x86_32,否则输出结果可能会增多
 
 二、安装简单系统busybox
 =
