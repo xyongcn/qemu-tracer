@@ -26,5 +26,5 @@ echo poweroff>>etc/init.d/rcS
 find . | cpio -o --format=newc > $PLAT/rootfs.img
 
 cd $PLAT
-./qemu -kernel linux-3.5.4-bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" -d pcall -D log-test
+./qemu -kernel linux-3.5.4-bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" -d func -D log
 #/home/crdong/main/x86_32/qemu
