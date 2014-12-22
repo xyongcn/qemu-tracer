@@ -7278,6 +7278,8 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
     TCGv_i32 tmp3;
     TCGv_i32 addr;
     TCGv_i64 tmp64;
+    
+    s->tb->type=TB_DEFAULT;
 
     insn = arm_ldl_code(env, s->pc, s->bswap_code);
     s->pc += 4;
@@ -7420,7 +7422,9 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
         } else if ((insn & 0x0e000000) == 0x0a000000) {
             /* branch link and change to thumb (blx <offset>) */
             int32_t offset;
-
+            
+			s->tb->type=TB_CALL;
+			
             val = (uint32_t)s->pc;
             tmp = tcg_temp_new_i32();
             tcg_gen_movi_i32(tmp, val);
@@ -7545,6 +7549,12 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
             if (op1 == 1) {
                 /* branch/exchange thumb (bx).  */
                 ARCH(4T);
+                
+                if (rm == 14) 
+                    s->tb->type=TB_RET;
+                else					
+					s->tb->type=TB_CALL;
+                
                 tmp = load_reg(s, rm);
                 gen_bx(s, tmp);
             } else if (op1 == 3) {
@@ -7574,6 +7584,9 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
 
             ARCH(5);
             /* branch link/exchange thumb (blx) */
+            
+            s->tb->type=TB_CALL;
+            
             tmp = load_reg(s, rm);
             tmp2 = tcg_temp_new_i32();
             tcg_gen_movi_i32(tmp2, s->pc);
@@ -8560,6 +8573,10 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
                                 loaded_var = tmp;
                                 loaded_base = 1;
                             } else {
+								
+								if(i==15)
+									s->tb->type=TB_RET;
+								
                                 store_reg_from_load(env, s, i, tmp);
                             }
                         } else {
@@ -8629,6 +8646,9 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
                 /* branch (and link) */
                 val = (int32_t)s->pc;
                 if (insn & (1 << 24)) {
+					
+					s->tb->type=TB_CALL;
+					
                     tmp = tcg_temp_new_i32();
                     tcg_gen_movi_i32(tmp, val);
                     store_reg(s, 14, tmp);
