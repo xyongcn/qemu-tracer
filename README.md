@@ -1,7 +1,7 @@
 一、安装qemu
 =
 目前QEMU的版本是2.0.2  
-过程中可能需要安装pkg-config、libsdl1.2-dev、libpixman-1-dev、libfdt-dev、libtool等必要软件包  
+过程中可能需要安装pkg-config、libsdl1.2-dev、libpixman-1-dev、libfdt-dev、libtool、gcc-multilib等必要软件包  
 ./configure --target-list=i386-softmmu --enable-sdl进行配置，--target-list指定目标机的平台  
 参见./configure --help  
 然后执行make命令。如果是在64位机器上的话，最好使用make ARCH=x86_32,否则输出结果可能会增多
@@ -52,8 +52,8 @@ find . | cpio -o --format=newc > BUSYBOX/rootfs.img
 注意rootfs.img不能生产在当前文件夹下，否则会生产自己的镜像。这里产生的镜像供下一步使用。
                
 3.编写启动脚本  
-首先要在工作的目录下新建一个addrs文件，存有5行地址，分别是内核起始地址，内核结束地址，busybox起始地址，busybox结束地址和内核符号表中modules的地址，可以参见configs/scripts/addrs文件，但需要注意的是每个内核镜像中的地址都不相同，需要自己查询。busybox的地址可以在编译出的busybox_unstripped的符号表中查到（使用nm命令）。还可以使用insert-busybox.rb脚本将busybox符号表导入数据库中。  
-使用以下命令运行qemu 
+首先要在工作的目录下新建一个addrs文件，存有5行地址，分别是内核起始地址，内核结束地址，busybox起始地址，busybox结束地址和内核符号表中modules的地址，可以参见configs/scripts/addrs文件，但需要注意的是每个内核镜像中的地址都不相同，需要自己查询。内核编译的过程是先生成一个带符号表的vmlinux文件，然后进行裁剪生成bzImage文件。qemu需要的是bzImage文件，但是查询符号表时要查询相应的vmlinux文件。可以使用nm -n命令查询符号表。busybox的地址可以在编译出的busybox_unstripped的符号表中查到（使用nm命令）。也可以查看内核和busybox编译出来生成的System.map，也含有符号表。内核起始地址就是_text的地址，内核结束地址是_end的地址，busybox起始地址是_init的地址，busybox结束地址是_end的地址。还可以使用insert-busybox.rb脚本将busybox符号表导入数据库中。  
+使用以下命令运行qemu，必须手动输入
 ``` 
 	#!/bin/sh
 	qemut-tracer/i386-softmmu/qemu-system-i386 -kernel bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" –d func –D log
