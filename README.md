@@ -34,9 +34,7 @@ make ARCH=i386 menuconfig
 =
 1.编写initrd启动脚本，其中BUSYBOX是busybox的路径  
 cd  BUSYBOX/_install  
-mkdir proc sys dev etc  
-cd etc  
-mkdir init.d  
+mkdir -p proc sys dev etc/init.d  
 vim BUSYBOX/_install/etc/init.d/rcS
 ```
 	#!/bin/sh
