@@ -4,7 +4,7 @@
 过程中可能需要安装pkg-config、libsdl1.2-dev、libpixman-1-dev、libfdt-dev、libtool、gcc-multilib等必要软件包  
 ./configure --target-list=i386-softmmu --enable-sdl进行配置，--target-list指定目标机的平台  
 参见./configure --help  
-然后执行make命令。如果是在64位机器上的话，最好使用make ARCH=x86_32,否则输出结果可能会增多
+然后执行make命令。如果是在64位机器上使用qemu-system-i386的话，最好使用make ARCH=x86_32,否则输出结果可能会不正常
 
 二、安装简单系统busybox
 =
@@ -54,7 +54,7 @@ find . | cpio -o --format=newc > BUSYBOX/rootfs.img
 使用以下命令运行qemu，必须手动输入
 ``` 
 	#!/bin/sh
-	qemut-tracer/i386-softmmu/qemu-system-i386 -kernel bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" –d func –D log
+	qemut-tracer/i386-softmmu/qemu-system-i386 -kernel bzImage -initrd rootfs.img -append "root=/dev/ram rdinit=sbin/init" -rtc clock=vm -icount 5 –d func –D log
 ``` 
 其中bzImage是linux内核编译出的文件，在arch/i386/boot文件夹下，rootfs.img是上一步创建的镜像文件  
 -d 参数指定日志输出项目,对qemu做了一定的修改,并增加了一个选项func可以追踪函数调用  
