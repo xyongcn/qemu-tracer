@@ -118,6 +118,13 @@ int main(int argc, char **argv)
 #include "qapi/string-input-visitor.h"
 #include "qom/object_interfaces.h"
 
+typedef uint32_t target_ulong;
+#define FUNC_MAX 35000
+target_ulong funcaddr[FUNC_MAX];
+int funcargc[FUNC_MAX];
+int funccount;
+int id=-1;
+
 #define DEFAULT_RAM_SIZE 128
 
 #define MAX_VIRTIO_CONSOLES 1
@@ -3978,6 +3985,15 @@ int main(int argc, char **argv, char **envp)
             exit(1);
         }
         qemu_set_log(mask);
+        
+        if (qemu_loglevel_mask(CPU_LOG_FUNC)) { 
+			FILE *fp = fopen("functions.txt", "r");
+			int i=0;
+			while(fscanf(fp,"%x",&funcaddr[i])!=-1)
+				i++;
+			funccount=i;
+		}
+        
     }
 
     if (!is_daemonized()) {

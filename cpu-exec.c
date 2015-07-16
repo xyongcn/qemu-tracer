@@ -24,6 +24,9 @@
 #include "sysemu/qtest.h"
 
 #include "qemu/timer.h"
+extern target_ulong funcaddr[];
+extern int funccount;
+extern int id;
 
 void cpu_loop_exit(CPUState *cpu)
 {
@@ -211,6 +214,23 @@ static void cpu_handle_debug_exception(CPUArchState *env)
     }
 }
 
+#ifndef TARGET_X86_64
+static int funcistraced(target_ulong target)
+{
+	int low=0,high=funccount-1,mid;
+	while(low<=high){
+		mid=(low+high)>>1;
+		if(funcaddr[mid]>target)
+			high=mid-1;
+		else if(funcaddr[mid]<target)
+			low=mid+1;
+		else
+			return mid;
+	}
+	return -1;
+}
+#endif
+
 /* main execution loop */
 
 volatile sig_atomic_t exit_request;
@@ -236,7 +256,7 @@ int cpu_exec(CPUArchState *env)
 	bool isoutput=false;
 #ifdef TARGET_I386
 	target_ulong kernel_start,kernel_end,busybox_start,busybox_end,modules_addr;
-	char modulename[64-sizeof(unsigned long)];	
+	char modulename[64-sizeof(unsigned long)];
 	
 	if (qemu_loglevel_mask(CPU_LOG_FUNC)) {
 		FILE *addrs_file = fopen("addrs", "r"); 
@@ -633,94 +653,117 @@ int cpu_exec(CPUArchState *env)
                              tb->tc_ptr, tb->pc, lookup_symbol(tb->pc));
                 }
                 
-		if (qemu_loglevel_mask(CPU_LOG_FUNC)) { 
-#if defined(TARGET_I386)	
-#ifdef TARGET_X86_64	
-			if(isoutput){
-				if(lasttbtype==TB_CALL){	
-					target_ulong module_core=0;																			
-					if(tb->pc>=kernel_start && tb->pc<=kernel_end)
-						strcpy(modulename,"kernel");					
-					else if(tb->pc>=busybox_start && tb->pc<=busybox_end)
-						strcpy(modulename,"busybox");					
-					else if(tb->pc>kernel_end){							
-						target_ulong next_list,current_module_addr = modules_addr - 4;
-						uint32_t core_size;			
-									
+				if (qemu_loglevel_mask(CPU_LOG_FUNC)) { 
+#if defined(TARGET_I386)
+#ifdef TARGET_X86_64
+					if(isoutput){
+						if(lasttbtype==TB_CALL){
+							target_ulong module_core=0;
+							if(tb->pc>=kernel_start && tb->pc<=kernel_end)
+								strcpy(modulename,"kernel");
+							else if(tb->pc>=busybox_start && tb->pc<=busybox_end)
+								strcpy(modulename,"busybox");
+							else if(tb->pc>kernel_end){
+								target_ulong next_list,current_module_addr = modules_addr - 4;
+								uint32_t core_size;
 								cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_list,sizeof(next_list),0);
 								current_module_addr=next_list-4;
-								while(current_module_addr != modules_addr-4){					
+								while(current_module_addr != modules_addr-4){
 									cpu_memory_rw_debug(cpu,current_module_addr+300,(uint8_t *)&module_core,sizeof(module_core),0);
-									cpu_memory_rw_debug(cpu,current_module_addr+312,(uint8_t *)&core_size,sizeof(core_size),0);		
+									cpu_memory_rw_debug(cpu,current_module_addr+312,(uint8_t *)&core_size,sizeof(core_size),0);
 									if(tb->pc>=module_core && tb->pc<module_core+core_size){
 										cpu_memory_rw_debug(cpu,current_module_addr+4+2*sizeof(target_ulong),(uint8_t *)&modulename,sizeof(modulename),0);
 										break;
 									}
-									target_ulong next_node;						
-									cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(target_ulong),0);	
+									target_ulong next_node;
+									cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(target_ulong),0);
 									current_module_addr=next_node-4;
-								}      
-							}else		
-								strcpy(modulename,"");			
-							qemu_log("0x%"PRIx64",0x%"PRIx64",%"PRIx64",%s,%"PRIx64"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cr[3],env->regs[R_ESP],modulename,tb->pc-module_core);	
-						}else if(lasttbtype==TB_RET) 
+								}
+							}else
+								strcpy(modulename,"");
+							qemu_log("0x%"PRIx64",0x%"PRIx64",%"PRIx64",%s,%"PRIx64"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cr[3],env->regs[R_ESP],modulename,tb->pc-module_core);
+						}else if(lasttbtype==TB_RET)
 							qemu_log("0x%"PRIx64",0x%"PRIx64",%"PRIx64"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cr[3],env->regs[R_ESP]-sizeof(target_ulong));
 						isoutput=false;
 					}
-					if(tb->type!=TB_DEFAULT){
-						lasttbtype=tb->type;	
+						if(tb->type!=TB_DEFAULT){
+						lasttbtype=tb->type;
 						isoutput=true;
-					}								
-#else 			             
-			if(isoutput){
-				target_ulong pid=env->cr[3];
-				if(lasttbtype==TB_CALL){
-					target_ulong module_core=0;
-					if(pid==0)
-						strcpy(modulename,"");
-					else if(tb->pc>=kernel_start && tb->pc<=kernel_end)
-						strcpy(modulename,"kernel");
-					else if(tb->pc>=busybox_start && tb->pc<=busybox_end)
-						strcpy(modulename,"busybox");
-					else{
-						target_ulong next_node,current_module_addr = modules_addr - 4;
-						uint32_t core_size;
-						cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(next_node),0);
-						current_module_addr=next_node-4;
-						while(current_module_addr != modules_addr-4){		
-							cpu_memory_rw_debug(cpu,current_module_addr+92+26*sizeof(target_ulong),(uint8_t *)&module_core,sizeof(module_core),0);
-							cpu_memory_rw_debug(cpu,current_module_addr+96+27*sizeof(target_ulong),(uint8_t *)&core_size,sizeof(core_size),0);
-							if(tb->pc>=module_core && tb->pc<module_core+core_size){
-								cpu_memory_rw_debug(cpu,current_module_addr+4+2*sizeof(target_ulong),(uint8_t *)&modulename,sizeof(modulename),0);
-								break;
-							}
-							cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(next_node),0);	
-							current_module_addr=next_node-4;
-						}                   														
-					}	
-					qemu_log("0x%"PRIx64",0x%"PRIx32",%"PRIx32",%s,%"PRIx32"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,env->regs[R_ESP],modulename,tb->pc-module_core);	
-				}else if(lasttbtype==TB_RET) 
-					qemu_log("0x%"PRIx64",0x%"PRIx32","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,env->regs[R_ESP]-4);	
-					isoutput=false;
-				}
-			if(tb->type!=TB_DEFAULT){
-				lasttbtype=tb->type;	
-				isoutput=true;
-			}	
-#endif																		
-#elif defined(TARGET_ARM)		
+					}
+#else
 					if(isoutput){
-						if(lasttbtype==TB_CALL)
-							qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->regs[13],tb->pc);
-						else if(lasttbtype==TB_RET)
-							qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->regs[13]);						
+						target_ulong pid=env->cr[3];
+						if(lasttbtype==TB_CALL){
+							id=funcistraced(tb->pc);
+							if(id!=-1){
+
+								target_ulong module_core=0;
+								uint32_t esp=env->regs[R_ESP];
+								uint32_t args[4];
+								if(pid==0)
+									strcpy(modulename,"");
+								else if(tb->pc>=kernel_start && tb->pc<=kernel_end)
+									strcpy(modulename,"kernel");
+								else if(tb->pc>=busybox_start && tb->pc<=busybox_end)
+									strcpy(modulename,"busybox");
+								else if(tb->pc>kernel_end){
+									target_ulong next_node,current_module_addr = modules_addr - 4;
+									uint32_t core_size;
+									cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(next_node),0);
+									current_module_addr=next_node-4;
+									while(current_module_addr != modules_addr-4){
+										cpu_memory_rw_debug(cpu,current_module_addr+92+26*sizeof(target_ulong),(uint8_t *)&module_core,sizeof(module_core),0);
+										cpu_memory_rw_debug(cpu,current_module_addr+96+27*sizeof(target_ulong),(uint8_t *)&core_size,sizeof(core_size),0);
+										if(tb->pc>=module_core && tb->pc<module_core+core_size){
+											cpu_memory_rw_debug(cpu,current_module_addr+4+2*sizeof(target_ulong),(uint8_t *)&modulename,sizeof(modulename),0);
+											break;
+										}
+										cpu_memory_rw_debug(cpu,current_module_addr+4,(uint8_t *)&next_node,sizeof(next_node),0);
+										current_module_addr=next_node-4;
+									}
+								}else
+									strcpy(modulename,"");
+								//int i;
+								/*for(i=0;i<4;i++)
+									cpu_memory_rw_debug(cpu,esp+(1+i)*4,(uint8_t *)&args[i],sizeof(uint32_t),0);*/
+									args[0]=env->regs[R_EAX];
+									args[1]=env->regs[R_EDX];
+									args[2]=env->regs[R_ECX];
+									cpu_memory_rw_debug(cpu,esp+(1+3)*4,(uint8_t *)&args[3],sizeof(uint32_t),0);
+								//qemu_log("0x%"PRIx64",0x%"PRIx32",%"PRIx32",%s,%"PRIx32"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,env->regs[R_ESP],modulename,tb->pc-module_core);
+								qemu_log("0x%"PRIx64",0x%"PRIx32",%"PRIx32",%s,%"PRIx32",%"PRIx32",%"PRIx32",%"PRIx32",%"PRIx32"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,env->regs[R_ESP],modulename,tb->pc-module_core,args[0],args[1],args[2],args[3]);
+								char bufmy[60];
+								char bufmy1[60];
+								char bufmy2[60];
+								cpu_memory_rw_debug(cpu,args[0],(uint8_t *)&bufmy,sizeof(bufmy),0);
+								cpu_memory_rw_debug(cpu,args[1],(uint8_t *)&bufmy1,sizeof(bufmy1),0);
+								cpu_memory_rw_debug(cpu,args[2],(uint8_t *)&bufmy2,sizeof(bufmy2),0);
+								qemu_log("%s %s %s\n",bufmy,bufmy1,bufmy2);
+							}
+							//qemu_log("%s\n",bufmy);
+						}else if(lasttbtype==TB_RET && false)
+							qemu_log("0x%"PRIx64",0x%"PRIx32","TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,env->regs[R_ESP]-4,env->regs[R_EAX]);
 						isoutput=false;
-					}	
+					}
 					if(tb->type!=TB_DEFAULT){
 						lasttbtype=tb->type;
 						isoutput=true;
-					}			
-#endif				
+					}
+#endif
+#elif defined(TARGET_ARM)
+					if(isoutput){
+						target_ulong esp=env->regs[13];
+						if(lasttbtype==TB_CALL || lasttbtype==TB_UNCCALL)
+							qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx",0x"TARGET_FMT_lx",0x"TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cp15.ttbr0_el1,esp&0xffffe000,esp,tb->pc);
+						else if(lasttbtype==TB_RET)
+							qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx",0x"TARGET_FMT_lx",0x"TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cp15.ttbr0_el1,esp&0xffffe000,esp);
+						isoutput=false;
+					}
+					if(tb->type!=TB_DEFAULT){
+						lasttbtype=tb->type;
+						isoutput=true;
+					}
+#endif
 				}
                 
                 /* see if we can patch the calling TB. When the TB

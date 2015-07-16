@@ -8653,6 +8653,8 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
                     tcg_gen_movi_i32(tmp, val);
                     store_reg(s, 14, tmp);
                 }
+                else
+					s->tb->type=TB_UNCCALL;
                 offset = sextract32(insn << 2, 0, 26);
                 val += offset + 4;
                 gen_jmp(s, val);

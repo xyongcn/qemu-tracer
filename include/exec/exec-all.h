@@ -138,6 +138,7 @@ static inline void tlb_flush(CPUState *cpu, int flush_global)
 #define TB_DEFAULT 0
 #define TB_CALL 1
 #define TB_RET 2
+#define TB_UNCCALL 3
 
 struct TranslationBlock {
 	
