@@ -78,7 +78,8 @@ find . | cpio -o --format=newc > BUSYBOX/rootfs.img
 5. 安装好的系统已包含测试需要的Firefox，Libre Office和VLC，还需要安装一些必要软件
 6. 下载linux3.19.1源码，make menuconfig配置才能够共图形界面使用，make之后make modules_install,make install更新内核，可以把旧的内核都删掉。此内核文件要放到服务器上，保证版本一致
 7. 安装sikuli，需要apt-get install libtesseract3
-8. 将此硬盘映像上传至服务器，使用qemu-img convert -f qcow -O raw *.qcow xxx.raw命令转换为raw格式
+8. 开机图形界面启动后自动执行脚本：settings-sessions-新加一个启动项，command填写脚本路径即可
+9. 将此硬盘映像上传至服务器，使用qemu-img convert -f qcow -O raw *.qcow xxx.raw命令转换为raw格式
 
 六、制作供QEMU使用的硬盘映像（旧）
 =
