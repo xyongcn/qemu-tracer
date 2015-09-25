@@ -73,9 +73,20 @@ find . | cpio -o --format=newc > BUSYBOX/rootfs.img
 =
 1. 系统为64位Mint 17，内核版本为3.19.1，硬盘映像格式为raw  
 2. 在http://www.linuxmint.com/release.php?id=22 下载Mint 17相应版本64位的iso  
+3. 使用VirtualBox（也可用VMware，未经实验）新建一个硬盘映像，格式选择QCOW（或VDI，未经实验）  
+4. 用刚才下载iso引导安装Mint 17系统  
+5. 安装好的系统已包含测试需要的Firefox，Libre Office和VLC，还需要安装一些必要软件
+6. 下载linux3.19.1源码，make menuconfig配置才能够共图形界面使用，make之后make modules_install,make install更新内核，可以把旧的内核都删掉。此内核文件要放到服务器上，保证版本一致
+7. 安装sikuli，需要apt-get install libtesseract3
+8. 将此硬盘映像上传至服务器，使用qemu-img convert -f qcow -O raw *.qcow xxx.raw命令转换为raw格式
+
+六、制作供QEMU使用的硬盘映像（旧）
+=
+1. 系统为64位Mint 17，内核版本为3.19.1，硬盘映像格式为raw  
+2. 在http://www.linuxmint.com/release.php?id=22 下载Mint 17相应版本64位的iso  
 3. 使用VirtualBox（也可用VMware，未经实验）新建一个硬盘映像，格式最好选择QCOW（或VDI，未经实验）  
 4. 用刚才下载iso引导安装Mint 17系统  
-5. 安装好的系统已包含测试需要的Firefox，Libra Office和VLC，还需要安装一些必要软件，如vim  
+5. 安装好的系统已包含测试需要的Firefox，Libre Office和VLC，还需要安装一些必要软件，如vim  
 6. 下载http://kernel.ubuntu.com/~kernel-ppa/mainline/v3.19.1-vivid/linux-headers-3.19.1-031901-generic_3.19.1-031901.201504091335_amd64.deb , http://kernel.ubuntu.com/~kernel-ppa/mainline/v3.19.1-vivid/linux-headers-3.19.1-031901_3.19.1-031901.201504091335_all.deb 和 http://kernel.ubuntu.com/~kernel-ppa/mainline/v3.19.1-vivid/linux-image-3.19.1-031901-generic_3.19.1-031901.201504091335_amd64.deb 三个deb包  
 7. 使用sudo dpkg -i linux-*.deb命令更新内核，重启后可检查内核版本已更新  
 8. 将此硬盘映像上传至服务器，使用qemu-img convert -f qcow -O raw *.qcow xxx.raw命令转换为raw格式，就可以使用了
