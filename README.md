@@ -6,6 +6,10 @@
 参见./configure --help  
 然后执行make命令。如果是在64位机器上使用qemu-system-i386的话，最好使用make ARCH=x86_32,否则输出结果可能会不正常
 
+在编译qemu的过程中,程序可能会报错,错误原因与系统的位数有关,在64为系统中unsigned int与long unsigned int的位数不相
+等,而编译器将警告当作错误处理,导致编译失败.如果编译失败,可以在制定的代码出加上强制类型转换.(曹睿东可能会在仓库中建
+不同的分支来解决这个问题)
+
 二、安装简单系统busybox
 =
 下载busybox1.22.1源代码  
@@ -50,7 +54,11 @@ find . | cpio -o --format=newc > BUSYBOX/rootfs.img
 注意rootfs.img不能生产在当前文件夹下，否则会生产自己的镜像。这里产生的镜像供下一步使用。
                
 3.编写启动脚本  
-首先要在工作的目录下新建一个addrs文件，存有5行地址，分别是内核起始地址，内核结束地址，busybox起始地址，busybox结束地址和内核符号表中modules的地址，可以参见configs/scripts/addrs文件，但需要注意的是每个内核镜像中的地址都不相同，需要自己查询。内核编译的过程是先生成一个带符号表的vmlinux文件，然后进行裁剪生成bzImage文件。qemu需要的是bzImage文件，但是查询符号表时要查询相应的vmlinux文件。可以使用nm -n命令查询符号表。busybox的地址可以在编译出的busybox_unstripped的符号表中查到（使用nm命令）。也可以查看内核和busybox编译出来生成的System.map，也含有符号表。内核起始地址就是_text的地址，内核结束地址是_end的地址，busybox起始地址是_init的地址，busybox结束地址是_end的地址。还可以使用insert-busybox.rb脚本将busybox符号表导入数据库中。  
+首先要在工作的目录下新建一个addrs文件，存有5行地址，分别是内核起始地址，内核结束地址，busybox起始地址，busybox结束地址和内核符号表中modules的地址，可以参见configs/scripts/addrs文件，但需要注意的是每个内核镜像中的地址都不相同，需要自己查询。内核编译的过程是先生成一个带符号表的vmlinux文件，然后进行裁剪生成bzImage文件。qemu需要的是bzImage文件，但是查询符号表时要查询相应的vmlinux文件。可以使用nm -n命令查询符号表。busybox的地址可以在编译出的busybox_unstripped的符号表中查到（使用nm命令）。也可以查看内核和busybox编译出来生成的System.map，也含有符号表。内核起始地址就是_text的地址，内核结束地址是_end的地址，busybox
+起始地址是_init的地址，busybox结束地址是_end的地址。还可以使用insert-busybox.rb脚本将busybox符号表导入数据库中。  
+
+linux内核编译过程,如果编译为32位,则使用make ARCH=i386 defconfig,默认则使用make defconfig.
+
 使用以下命令运行qemu，必须手动输入
 ``` 
 	#!/bin/sh
