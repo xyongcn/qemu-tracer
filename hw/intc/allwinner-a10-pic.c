@@ -23,7 +23,7 @@
 static void aw_a10_pic_update(AwA10PICState *s)
 {
     uint8_t i;
-    int irq = 0, fiq = 0, pending;
+    int irq = 0, fiq = 0, zeroes;
 
     s->vector = 0;
 
@@ -32,9 +32,9 @@ static void aw_a10_pic_update(AwA10PICState *s)
         fiq |= s->select[i] & s->irq_pending[i] & ~s->mask[i];
 
         if (!s->vector) {
-            pending = ffs(s->irq_pending[i] & ~s->mask[i]);
-            if (pending) {
-                s->vector = (i * 32 + pending - 1) * 4;
+            zeroes = ctz32(s->irq_pending[i] & ~s->mask[i]);
+            if (zeroes != 32) {
+                s->vector = (i * 32 + zeroes) * 4;
             }
         }
     }
@@ -97,6 +97,7 @@ static void aw_a10_pic_write(void *opaque, hwaddr offset, uint64_t value,
     switch (offset) {
     case AW_A10_PIC_BASE_ADDR:
         s->base_addr = value & ~0x3;
+        break;
     case AW_A10_PIC_PROTECT:
         s->protect = value;
         break;
@@ -141,7 +142,6 @@ static const VMStateDescription vmstate_aw_a10_pic = {
     .name = "a10.pic",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(vector, AwA10PICState),
         VMSTATE_UINT32(base_addr, AwA10PICState),

@@ -14,6 +14,7 @@
 #include "qemu/error-report.h"
 #include "trace.h"
 #include "hw/virtio/virtio-serial.h"
+#include "qapi-event.h"
 
 #define TYPE_VIRTIO_CONSOLE_SERIAL_PORT "virtserialport"
 #define VIRTIO_CONSOLE(obj) \
@@ -69,7 +70,8 @@ static ssize_t flush_buf(VirtIOSerialPort *port,
         if (!k->is_console) {
             virtio_serial_throttle_port(port, true);
             if (!vcon->watch) {
-                vcon->watch = qemu_chr_fe_add_watch(vcon->chr, G_IO_OUT,
+                vcon->watch = qemu_chr_fe_add_watch(vcon->chr,
+                                                    G_IO_OUT|G_IO_HUP,
                                                     chr_write_unblocked, vcon);
             }
         }
@@ -81,11 +83,25 @@ static ssize_t flush_buf(VirtIOSerialPort *port,
 static void set_guest_connected(VirtIOSerialPort *port, int guest_connected)
 {
     VirtConsole *vcon = VIRTIO_CONSOLE(port);
+    DeviceState *dev = DEVICE(port);
 
-    if (!vcon->chr) {
-        return;
+    if (vcon->chr) {
+        qemu_chr_fe_set_open(vcon->chr, guest_connected);
     }
-    qemu_chr_fe_set_open(vcon->chr, guest_connected);
+
+    if (dev->id) {
+        qapi_event_send_vserport_change(dev->id, guest_connected,
+                                        &error_abort);
+    }
+}
+
+static void guest_writable(VirtIOSerialPort *port)
+{
+    VirtConsole *vcon = VIRTIO_CONSOLE(port);
+
+    if (vcon->chr) {
+        qemu_chr_accept_input(vcon->chr);
+    }
 }
 
 /* Readiness of the guest to accept data on a port */
@@ -181,6 +197,7 @@ static void virtserialport_class_init(ObjectClass *klass, void *data)
     k->unrealize = virtconsole_unrealize;
     k->have_data = flush_buf;
     k->set_guest_connected = set_guest_connected;
+    k->guest_writable = guest_writable;
     dc->props = virtserialport_properties;
 }
 

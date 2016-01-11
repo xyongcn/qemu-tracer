@@ -26,6 +26,11 @@
 #include "exec/memory.h"
 #include "hw/irq.h"
 
+/*
+ * current device naming scheme supports up to 256 memory devices
+ */
+#define ACPI_MAX_RAM_SLOTS 256
+
 /* from linux include/acpi/actype.h */
 /* Default ACPI register widths */
 
@@ -85,6 +90,13 @@
 
 /* PM2_CNT */
 #define ACPI_BITMASK_ARB_DISABLE                0x0001
+
+/* These values are part of guest ABI, and can not be changed */
+typedef enum {
+    ACPI_PCI_HOTPLUG_STATUS = 2,
+    ACPI_CPU_HOTPLUG_STATUS = 4,
+    ACPI_MEMORY_HOTPLUG_STATUS = 8,
+} AcpiGPEStatusBits;
 
 /* structs */
 typedef struct ACPIPMTimer ACPIPMTimer;
@@ -155,7 +167,8 @@ void acpi_pm1_evt_init(ACPIREGS *ar, acpi_update_sci_fn update_sci,
                        MemoryRegion *parent);
 
 /* PM1a_CNT: piix and ich9 don't implement PM1b CNT. */
-void acpi_pm1_cnt_init(ACPIREGS *ar, MemoryRegion *parent, uint8_t s4_val);
+void acpi_pm1_cnt_init(ACPIREGS *ar, MemoryRegion *parent,
+                       bool disable_s3, bool disable_s4, uint8_t s4_val);
 void acpi_pm1_cnt_update(ACPIREGS *ar,
                          bool sci_enable, bool sci_disable);
 void acpi_pm1_cnt_reset(ACPIREGS *ar);
@@ -166,6 +179,9 @@ void acpi_gpe_reset(ACPIREGS *ar);
 
 void acpi_gpe_ioport_writeb(ACPIREGS *ar, uint32_t addr, uint32_t val);
 uint32_t acpi_gpe_ioport_readb(ACPIREGS *ar, uint32_t addr);
+
+void acpi_send_gpe_event(ACPIREGS *ar, qemu_irq irq,
+                         AcpiGPEStatusBits status);
 
 void acpi_update_sci(ACPIREGS *acpi_regs, qemu_irq irq);
 

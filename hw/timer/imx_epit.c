@@ -5,22 +5,17 @@
  * Copyright (c) 2011 NICTA Pty Ltd
  * Originally written by Hans Jiang
  * Updated by Peter Chubb
- * Updated by Jean-Christophe Dubois
+ * Updated by Jean-Christophe Dubois <jcd@tribudubois.net>
  *
  * This code is licensed under GPL version 2 or later.  See
  * the COPYING file in the top-level directory.
  *
  */
 
-#include "hw/hw.h"
-#include "qemu/bitops.h"
-#include "qemu/timer.h"
-#include "hw/ptimer.h"
-#include "hw/sysbus.h"
 #include "hw/arm/imx.h"
+#include "hw/timer/imx_epit.h"
+#include "hw/misc/imx_ccm.h"
 #include "qemu/main-loop.h"
-
-#define TYPE_IMX_EPIT "imx.epit"
 
 #define DEBUG_TIMER 0
 #if DEBUG_TIMER
@@ -61,30 +56,6 @@ static char const *imx_epit_reg_name(uint32_t reg)
 #  define IPRINTF(fmt, args...) do {} while (0)
 #endif
 
-#define IMX_EPIT(obj) \
-        OBJECT_CHECK(IMXEPITState, (obj), TYPE_IMX_EPIT)
-
-/*
- * EPIT: Enhanced periodic interrupt timer
- */
-
-#define CR_EN       (1 << 0)
-#define CR_ENMOD    (1 << 1)
-#define CR_OCIEN    (1 << 2)
-#define CR_RLD      (1 << 3)
-#define CR_PRESCALE_SHIFT (4)
-#define CR_PRESCALE_MASK  (0xfff)
-#define CR_SWR      (1 << 16)
-#define CR_IOVW     (1 << 17)
-#define CR_DBGEN    (1 << 18)
-#define CR_WAITEN   (1 << 19)
-#define CR_DOZEN    (1 << 20)
-#define CR_STOPEN   (1 << 21)
-#define CR_CLKSRC_SHIFT (24)
-#define CR_CLKSRC_MASK  (0x3 << CR_CLKSRC_SHIFT)
-
-#define TIMER_MAX  0XFFFFFFFFUL
-
 /*
  * Exact clock frequencies vary from board to board.
  * These are typical.
@@ -95,23 +66,6 @@ static const IMXClk imx_epit_clocks[] =  {
     IPG,      /* 10 ipg_clk_highfreq */
     CLK_32k,  /* 11 ipg_clk_32k -- ~32kHz */
 };
-
-typedef struct {
-    SysBusDevice busdev;
-    ptimer_state *timer_reload;
-    ptimer_state *timer_cmp;
-    MemoryRegion iomem;
-    DeviceState *ccm;
-
-    uint32_t cr;
-    uint32_t sr;
-    uint32_t lr;
-    uint32_t cmp;
-    uint32_t cnt;
-
-    uint32_t freq;
-    qemu_irq irq;
-} IMXEPITState;
 
 /*
  * Update interrupt status
@@ -155,7 +109,7 @@ static void imx_epit_reset(DeviceState *dev)
      */
     s->cr &= (CR_EN|CR_ENMOD|CR_STOPEN|CR_DOZEN|CR_WAITEN|CR_DBGEN);
     s->sr = 0;
-    s->lr = TIMER_MAX;
+    s->lr = EPIT_TIMER_MAX;
     s->cmp = 0;
     s->cnt = 0;
     /* stop both timers */
@@ -163,9 +117,9 @@ static void imx_epit_reset(DeviceState *dev)
     ptimer_stop(s->timer_reload);
     /* compute new frequency */
     imx_epit_set_freq(s);
-    /* init both timers to TIMER_MAX */
-    ptimer_set_limit(s->timer_cmp, TIMER_MAX, 1);
-    ptimer_set_limit(s->timer_reload, TIMER_MAX, 1);
+    /* init both timers to EPIT_TIMER_MAX */
+    ptimer_set_limit(s->timer_cmp, EPIT_TIMER_MAX, 1);
+    ptimer_set_limit(s->timer_reload, EPIT_TIMER_MAX, 1);
     if (s->freq && (s->cr & CR_EN)) {
         /* if the timer is still enabled, restart it */
         ptimer_run(s->timer_reload, 0);
@@ -174,9 +128,9 @@ static void imx_epit_reset(DeviceState *dev)
 
 static uint32_t imx_epit_update_count(IMXEPITState *s)
 {
-     s->cnt = ptimer_get_count(s->timer_reload);
+    s->cnt = ptimer_get_count(s->timer_reload);
 
-     return s->cnt;
+    return s->cnt;
 }
 
 static uint64_t imx_epit_read(void *opaque, hwaddr offset, unsigned size)
@@ -227,7 +181,7 @@ static void imx_epit_reload_compare_timer(IMXEPITState *s)
             /* It'll fire in this round of the timer */
             next = tmp - s->cmp;
         } else { /* catch it next time around */
-            next = tmp - s->cmp + ((s->cr & CR_RLD) ? TIMER_MAX : s->lr);
+            next = tmp - s->cmp + ((s->cr & CR_RLD) ? EPIT_TIMER_MAX : s->lr);
         }
         ptimer_set_count(s->timer_cmp, next);
     }
@@ -260,8 +214,8 @@ static void imx_epit_write(void *opaque, hwaddr offset, uint64_t value,
                     ptimer_set_limit(s->timer_reload, s->lr, 1);
                     ptimer_set_limit(s->timer_cmp, s->lr, 1);
                 } else {
-                    ptimer_set_limit(s->timer_reload, TIMER_MAX, 1);
-                    ptimer_set_limit(s->timer_cmp, TIMER_MAX, 1);
+                    ptimer_set_limit(s->timer_reload, EPIT_TIMER_MAX, 1);
+                    ptimer_set_limit(s->timer_cmp, EPIT_TIMER_MAX, 1);
                 }
             }
 
@@ -344,17 +298,16 @@ void imx_timerp_create(const hwaddr addr, qemu_irq irq, DeviceState *ccm)
 }
 
 static const MemoryRegionOps imx_epit_ops = {
-  .read = imx_epit_read,
-  .write = imx_epit_write,
-  .endianness = DEVICE_NATIVE_ENDIAN,
+    .read = imx_epit_read,
+    .write = imx_epit_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
 static const VMStateDescription vmstate_imx_timer_epit = {
-    .name = "imx.epit",
+    .name = TYPE_IMX_EPIT,
     .version_id = 2,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(cr, IMXEPITState),
         VMSTATE_UINT32(sr, IMXEPITState),
         VMSTATE_UINT32(lr, IMXEPITState),

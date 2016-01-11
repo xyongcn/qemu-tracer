@@ -88,28 +88,78 @@ void QEMU_NORETURN cpu_io_recompile(CPUState *cpu, uintptr_t retaddr);
 TranslationBlock *tb_gen_code(CPUState *cpu,
                               target_ulong pc, target_ulong cs_base, int flags,
                               int cflags);
-void cpu_exec_init(CPUArchState *env);
+void cpu_exec_init(CPUState *cpu, Error **errp);
 void QEMU_NORETURN cpu_loop_exit(CPUState *cpu);
-int page_unprotect(target_ulong address, uintptr_t pc, void *puc);
-void tb_invalidate_phys_page_range(tb_page_addr_t start, tb_page_addr_t end,
-                                   int is_cpu_write_access);
-void tb_invalidate_phys_range(tb_page_addr_t start, tb_page_addr_t end,
-                              int is_cpu_write_access);
+
 #if !defined(CONFIG_USER_ONLY)
+bool qemu_in_vcpu_thread(void);
+void cpu_reload_memory_map(CPUState *cpu);
 void tcg_cpu_address_space_init(CPUState *cpu, AddressSpace *as);
 /* cputlb.c */
+/**
+ * tlb_flush_page:
+ * @cpu: CPU whose TLB should be flushed
+ * @addr: virtual address of page to be flushed
+ *
+ * Flush one page from the TLB of the specified CPU, for all
+ * MMU indexes.
+ */
 void tlb_flush_page(CPUState *cpu, target_ulong addr);
+/**
+ * tlb_flush:
+ * @cpu: CPU whose TLB should be flushed
+ * @flush_global: ignored
+ *
+ * Flush the entire TLB for the specified CPU.
+ * The flush_global flag is in theory an indicator of whether the whole
+ * TLB should be flushed, or only those entries not marked global.
+ * In practice QEMU does not implement any global/not global flag for
+ * TLB entries, and the argument is ignored.
+ */
 void tlb_flush(CPUState *cpu, int flush_global);
+/**
+ * tlb_flush_page_by_mmuidx:
+ * @cpu: CPU whose TLB should be flushed
+ * @addr: virtual address of page to be flushed
+ * @...: list of MMU indexes to flush, terminated by a negative value
+ *
+ * Flush one page from the TLB of the specified CPU, for the specified
+ * MMU indexes.
+ */
+void tlb_flush_page_by_mmuidx(CPUState *cpu, target_ulong addr, ...);
+/**
+ * tlb_flush_by_mmuidx:
+ * @cpu: CPU whose TLB should be flushed
+ * @...: list of MMU indexes to flush, terminated by a negative value
+ *
+ * Flush all entries from the TLB of the specified CPU, for the specified
+ * MMU indexes.
+ */
+void tlb_flush_by_mmuidx(CPUState *cpu, ...);
 void tlb_set_page(CPUState *cpu, target_ulong vaddr,
                   hwaddr paddr, int prot,
                   int mmu_idx, target_ulong size);
+void tlb_set_page_with_attrs(CPUState *cpu, target_ulong vaddr,
+                             hwaddr paddr, MemTxAttrs attrs,
+                             int prot, int mmu_idx, target_ulong size);
 void tb_invalidate_phys_addr(AddressSpace *as, hwaddr addr);
+void probe_write(CPUArchState *env, target_ulong addr, int mmu_idx,
+                 uintptr_t retaddr);
 #else
 static inline void tlb_flush_page(CPUState *cpu, target_ulong addr)
 {
 }
 
 static inline void tlb_flush(CPUState *cpu, int flush_global)
+{
+}
+
+static inline void tlb_flush_page_by_mmuidx(CPUState *cpu,
+                                            target_ulong addr, ...)
+{
+}
+
+static inline void tlb_flush_by_mmuidx(CPUState *cpu, ...)
 {
 }
 #endif
@@ -131,29 +181,29 @@ static inline void tlb_flush(CPUState *cpu, int flush_global)
 #if defined(__arm__) || defined(_ARCH_PPC) \
     || defined(__x86_64__) || defined(__i386__) \
     || defined(__sparc__) || defined(__aarch64__) \
+    || defined(__s390x__) || defined(__mips__) \
     || defined(CONFIG_TCG_INTERPRETER)
 #define USE_DIRECT_JUMP
 #endif
 
-#define TB_DEFAULT 0
-#define TB_CALL 1
-#define TB_RET 2
-
 struct TranslationBlock {
-	uint8_t type;	
-	
     target_ulong pc;   /* simulated PC corresponding to this block (EIP + CS base) */
     target_ulong cs_base; /* CS base for this block */
     uint64_t flags; /* flags defining in which context the code was generated */
     uint16_t size;      /* size of target code for this block (1 <=
                            size <= TARGET_PAGE_SIZE) */
-    uint16_t cflags;    /* compile flags */
+    uint16_t icount;
+    uint32_t cflags;    /* compile flags */
 #define CF_COUNT_MASK  0x7fff
 #define CF_LAST_IO     0x8000 /* Last insn may be an IO access.  */
+#define CF_NOCACHE     0x10000 /* To be freed after execution */
+#define CF_USE_ICOUNT  0x20000
 
-    uint8_t *tc_ptr;    /* pointer to the translated code */
+    void *tc_ptr;    /* pointer to the translated code */
     /* next matching tb for physical address. */
     struct TranslationBlock *phys_hash_next;
+    /* original tb when cflags has CF_NOCACHE */
+    struct TranslationBlock *orig_tb;
     /* first and second physical page containing code. The lower bit
        of the pointer tells the index in page_next[] */
     struct TranslationBlock *page_next[2];
@@ -173,8 +223,14 @@ struct TranslationBlock {
        jmp_first */
     struct TranslationBlock *jmp_next[2];
     struct TranslationBlock *jmp_first;
-    uint32_t icount;
+    
+	uint8_t type;
 };
+
+#define TB_DEFAULT 0
+#define TB_CALL	   1
+#define TB_RET	   2
+#define TB_UNCCALL 3
 
 #include "exec/spinlock.h"
 
@@ -195,28 +251,8 @@ struct TBContext {
     int tb_invalidated_flag;
 };
 
-static inline unsigned int tb_jmp_cache_hash_page(target_ulong pc)
-{
-    target_ulong tmp;
-    tmp = pc ^ (pc >> (TARGET_PAGE_BITS - TB_JMP_PAGE_BITS));
-    return (tmp >> (TARGET_PAGE_BITS - TB_JMP_PAGE_BITS)) & TB_JMP_PAGE_MASK;
-}
-
-static inline unsigned int tb_jmp_cache_hash_func(target_ulong pc)
-{
-    target_ulong tmp;
-    tmp = pc ^ (pc >> (TARGET_PAGE_BITS - TB_JMP_PAGE_BITS));
-    return (((tmp >> (TARGET_PAGE_BITS - TB_JMP_PAGE_BITS)) & TB_JMP_PAGE_MASK)
-	    | (tmp & TB_JMP_ADDR_MASK));
-}
-
-static inline unsigned int tb_phys_hash_func(tb_page_addr_t pc)
-{
-    return (pc >> 2) & (CODE_GEN_PHYS_HASH_SIZE - 1);
-}
-
 void tb_free(TranslationBlock *tb);
-void tb_flush(CPUArchState *env);
+void tb_flush(CPUState *cpu);
 void tb_phys_invalidate(TranslationBlock *tb, tb_page_addr_t page_addr);
 
 #if defined(USE_DIRECT_JUMP)
@@ -229,13 +265,21 @@ static inline void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr)
     /* no need to flush icache explicitly */
 }
 #elif defined(_ARCH_PPC)
-void ppc_tb_set_jmp_target(unsigned long jmp_addr, unsigned long addr);
+void ppc_tb_set_jmp_target(uintptr_t jmp_addr, uintptr_t addr);
 #define tb_set_jmp_target1 ppc_tb_set_jmp_target
 #elif defined(__i386__) || defined(__x86_64__)
 static inline void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr)
 {
     /* patch the branch destination */
-    *(uint32_t *)jmp_addr = addr - (jmp_addr + 4);
+    stl_le_p((void*)jmp_addr, addr - (jmp_addr + 4));
+    /* no need to flush icache explicitly */
+}
+#elif defined(__s390x__)
+static inline void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr)
+{
+    /* patch the branch destination */
+    intptr_t disp = addr - (jmp_addr - 2);
+    stl_be_p((void*)jmp_addr, disp / 2);
     /* no need to flush icache explicitly */
 }
 #elif defined(__aarch64__)
@@ -265,7 +309,7 @@ static inline void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr)
     __asm __volatile__ ("swi 0x9f0002" : : "r" (_beg), "r" (_end), "r" (_flg));
 #endif
 }
-#elif defined(__sparc__)
+#elif defined(__sparc__) || defined(__mips__)
 void tb_set_jmp_target1(uintptr_t jmp_addr, uintptr_t addr);
 #else
 #error tb_set_jmp_target1 is missing
@@ -320,49 +364,19 @@ extern uintptr_t tci_tb_ptr;
    to indicate the compressed mode; subtracting two works around that.  It
    is also the case that there are no host isas that contain a call insn
    smaller than 4 bytes, so we don't worry about special-casing this.  */
-#if defined(CONFIG_TCG_INTERPRETER)
-# define GETPC_ADJ   0
-#else
-# define GETPC_ADJ   2
-#endif
+#define GETPC_ADJ   2
 
 #define GETPC()  (GETRA() - GETPC_ADJ)
 
 #if !defined(CONFIG_USER_ONLY)
 
-void phys_mem_set_alloc(void *(*alloc)(size_t));
+void phys_mem_set_alloc(void *(*alloc)(size_t, uint64_t *align));
 
-struct MemoryRegion *iotlb_to_region(AddressSpace *as, hwaddr index);
-bool io_mem_read(struct MemoryRegion *mr, hwaddr addr,
-                 uint64_t *pvalue, unsigned size);
-bool io_mem_write(struct MemoryRegion *mr, hwaddr addr,
-                  uint64_t value, unsigned size);
+struct MemoryRegion *iotlb_to_region(CPUState *cpu,
+                                     hwaddr index);
 
 void tlb_fill(CPUState *cpu, target_ulong addr, int is_write, int mmu_idx,
               uintptr_t retaddr);
-
-uint8_t helper_ldb_cmmu(CPUArchState *env, target_ulong addr, int mmu_idx);
-uint16_t helper_ldw_cmmu(CPUArchState *env, target_ulong addr, int mmu_idx);
-uint32_t helper_ldl_cmmu(CPUArchState *env, target_ulong addr, int mmu_idx);
-uint64_t helper_ldq_cmmu(CPUArchState *env, target_ulong addr, int mmu_idx);
-
-#define ACCESS_TYPE (NB_MMU_MODES + 1)
-#define MEMSUFFIX _code
-
-#define DATA_SIZE 1
-#include "exec/softmmu_header.h"
-
-#define DATA_SIZE 2
-#include "exec/softmmu_header.h"
-
-#define DATA_SIZE 4
-#include "exec/softmmu_header.h"
-
-#define DATA_SIZE 8
-#include "exec/softmmu_header.h"
-
-#undef ACCESS_TYPE
-#undef MEMSUFFIX
 
 #endif
 
@@ -376,35 +390,13 @@ static inline tb_page_addr_t get_page_addr_code(CPUArchState *env1, target_ulong
 tb_page_addr_t get_page_addr_code(CPUArchState *env1, target_ulong addr);
 #endif
 
-typedef void (CPUDebugExcpHandler)(CPUArchState *env);
-
-void cpu_set_debug_excp_handler(CPUDebugExcpHandler *handler);
-
 /* vl.c */
 extern int singlestep;
 
 /* cpu-exec.c */
 extern volatile sig_atomic_t exit_request;
 
-/**
- * cpu_can_do_io:
- * @cpu: The CPU for which to check IO.
- *
- * Deterministic execution requires that IO only be performed on the last
- * instruction of a TB so that interrupts take effect immediately.
- *
- * Returns: %true if memory-mapped IO is safe, %false otherwise.
- */
-static inline bool cpu_can_do_io(CPUState *cpu)
-{
-    if (!use_icount) {
-        return true;
-    }
-    /* If not executing code then assume we are ok.  */
-    if (cpu->current_tb == NULL) {
-        return true;
-    }
-    return cpu->can_do_io != 0;
-}
-
+#if !defined(CONFIG_USER_ONLY)
+void migration_bitmap_extend(ram_addr_t old, ram_addr_t new);
+#endif
 #endif

@@ -17,8 +17,8 @@
 #include "block/aio.h"
 #include "sysemu/iothread.h"
 #include "qmp-commands.h"
-
-#define IOTHREADS_PATH "/objects"
+#include "qemu/error-report.h"
+#include "qemu/rcu.h"
 
 typedef ObjectClass IOThreadClass;
 
@@ -30,6 +30,9 @@ typedef ObjectClass IOThreadClass;
 static void *iothread_run(void *opaque)
 {
     IOThread *iothread = opaque;
+    bool blocking;
+
+    rcu_register_thread();
 
     qemu_mutex_lock(&iothread->init_done_lock);
     iothread->thread_id = qemu_get_thread_id();
@@ -38,11 +41,15 @@ static void *iothread_run(void *opaque)
 
     while (!iothread->stopping) {
         aio_context_acquire(iothread->ctx);
-        while (!iothread->stopping && aio_poll(iothread->ctx, true)) {
+        blocking = true;
+        while (!iothread->stopping && aio_poll(iothread->ctx, blocking)) {
             /* Progress was made, keep going */
+            blocking = false;
         }
         aio_context_release(iothread->ctx);
     }
+
+    rcu_unregister_thread();
     return NULL;
 }
 
@@ -50,6 +57,9 @@ static void iothread_instance_finalize(Object *obj)
 {
     IOThread *iothread = IOTHREAD(obj);
 
+    if (!iothread->ctx) {
+        return;
+    }
     iothread->stopping = true;
     aio_notify(iothread->ctx);
     qemu_thread_join(&iothread->thread);
@@ -60,11 +70,16 @@ static void iothread_instance_finalize(Object *obj)
 
 static void iothread_complete(UserCreatable *obj, Error **errp)
 {
+    Error *local_error = NULL;
     IOThread *iothread = IOTHREAD(obj);
 
     iothread->stopping = false;
-    iothread->ctx = aio_context_new();
     iothread->thread_id = -1;
+    iothread->ctx = aio_context_new(&local_error);
+    if (!iothread->ctx) {
+        error_propagate(errp, local_error);
+        return;
+    }
 
     qemu_mutex_init(&iothread->init_done_lock);
     qemu_cond_init(&iothread->init_done_cond);
@@ -109,18 +124,6 @@ static void iothread_register_types(void)
 
 type_init(iothread_register_types)
 
-IOThread *iothread_find(const char *id)
-{
-    Object *container = container_get(object_get_root(), IOTHREADS_PATH);
-    Object *child;
-
-    child = object_property_get_link(container, id, NULL);
-    if (!child) {
-        return NULL;
-    }
-    return (IOThread *)object_dynamic_cast(child, TYPE_IOTHREAD);
-}
-
 char *iothread_get_id(IOThread *iothread)
 {
     return object_get_canonical_path_component(OBJECT(iothread));
@@ -160,7 +163,7 @@ IOThreadInfoList *qmp_query_iothreads(Error **errp)
 {
     IOThreadInfoList *head = NULL;
     IOThreadInfoList **prev = &head;
-    Object *container = container_get(object_get_root(), IOTHREADS_PATH);
+    Object *container = object_get_objects_root();
 
     object_child_foreach(container, query_one_iothread, &prev);
     return head;

@@ -156,13 +156,12 @@ static void main_cpu_reset(void *opaque)
     mmubooke_create_initial_mapping(env, 0, 0);
 }
 
-static void bamboo_init(QEMUMachineInitArgs *args)
+static void bamboo_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *cpu_model = args->cpu_model;
-    const char *kernel_filename = args->kernel_filename;
-    const char *kernel_cmdline = args->kernel_cmdline;
-    const char *initrd_filename = args->initrd_filename;
+    ram_addr_t ram_size = machine->ram_size;
+    const char *kernel_filename = machine->kernel_filename;
+    const char *kernel_cmdline = machine->kernel_cmdline;
+    const char *initrd_filename = machine->initrd_filename;
     unsigned int pci_irq_nrs[4] = { 28, 27, 26, 25 };
     MemoryRegion *address_space_mem = get_system_memory();
     MemoryRegion *isa = g_new(MemoryRegion, 1);
@@ -184,10 +183,10 @@ static void bamboo_init(QEMUMachineInitArgs *args)
     int i;
 
     /* Setup CPU. */
-    if (cpu_model == NULL) {
-        cpu_model = "440EP";
+    if (machine->cpu_model == NULL) {
+        machine->cpu_model = "440EP";
     }
-    cpu = cpu_ppc_init(cpu_model);
+    cpu = cpu_ppc_init(machine->cpu_model);
     if (cpu == NULL) {
         fprintf(stderr, "Unable to initialize CPU!\n");
         exit(1);
@@ -253,7 +252,8 @@ static void bamboo_init(QEMUMachineInitArgs *args)
 
     /* Load kernel. */
     if (kernel_filename) {
-        success = load_uimage(kernel_filename, &entry, &loadaddr, NULL);
+        success = load_uimage(kernel_filename, &entry, &loadaddr, NULL,
+                              NULL, NULL);
         if (success < 0) {
             success = load_elf(kernel_filename, NULL, NULL, &elf_entry,
                                &elf_lowaddr, NULL, 1, ELF_MACHINE, 0);

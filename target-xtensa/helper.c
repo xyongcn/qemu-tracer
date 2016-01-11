@@ -51,6 +51,20 @@ static void xtensa_core_class_init(ObjectClass *oc, void *data)
     cc->gdb_num_core_regs = config->gdb_regmap.num_regs;
 }
 
+void xtensa_finalize_config(XtensaConfig *config)
+{
+    unsigned i, n = 0;
+
+    if (config->gdb_regmap.num_regs) {
+        return;
+    }
+
+    for (i = 0; config->gdb_regmap.reg[i].targno >= 0; ++i) {
+        n += (config->gdb_regmap.reg[i].type != 6);
+    }
+    config->gdb_regmap.num_regs = n;
+}
+
 void xtensa_register_core(XtensaConfigList *node)
 {
     TypeInfo type = {
@@ -79,9 +93,10 @@ static uint32_t check_hw_breakpoints(CPUXtensaState *env)
     return 0;
 }
 
-void xtensa_breakpoint_handler(CPUXtensaState *env)
+void xtensa_breakpoint_handler(CPUState *cs)
 {
-    CPUState *cs = CPU(xtensa_env_get_cpu(env));
+    XtensaCPU *cpu = XTENSA_CPU(cs);
+    CPUXtensaState *env = &cpu->env;
 
     if (cs->watchpoint_hit) {
         if (cs->watchpoint_hit->flags & BP_CPU) {
@@ -253,6 +268,16 @@ void xtensa_cpu_do_interrupt(CPUState *cs)
         break;
     }
     check_interrupts(env);
+}
+
+bool xtensa_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
+{
+    if (interrupt_request & CPU_INTERRUPT_HARD) {
+        cs->exception_index = EXC_IRQ;
+        xtensa_cpu_do_interrupt(cs);
+        return true;
+    }
+    return false;
 }
 
 static void reset_tlb_mmu_all_ways(CPUXtensaState *env,

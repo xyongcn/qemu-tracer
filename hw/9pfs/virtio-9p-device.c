@@ -19,10 +19,12 @@
 #include "fsdev/qemu-fsdev.h"
 #include "virtio-9p-xattr.h"
 #include "virtio-9p-coth.h"
+#include "hw/virtio/virtio-access.h"
 
-static uint32_t virtio_9p_get_features(VirtIODevice *vdev, uint32_t features)
+static uint64_t virtio_9p_get_features(VirtIODevice *vdev, uint64_t features,
+                                       Error **errp)
 {
-    features |= 1 << VIRTIO_9P_MOUNT_TAG;
+    virtio_add_feature(&features, VIRTIO_9P_MOUNT_TAG);
     return features;
 }
 
@@ -34,7 +36,7 @@ static void virtio_9p_get_config(VirtIODevice *vdev, uint8_t *config)
 
     len = strlen(s->tag);
     cfg = g_malloc0(sizeof(struct virtio_9p_config) + len);
-    stw_raw(&cfg->tag_len, len);
+    virtio_stw_p(vdev, &cfg->tag_len, len);
     /* We don't copy the terminating null to config space */
     memcpy(cfg->tag, s->tag, len);
     memcpy(config, cfg, s->config_size);
@@ -139,7 +141,8 @@ out:
 /* virtio-9p device */
 
 static Property virtio_9p_properties[] = {
-    DEFINE_VIRTIO_9P_PROPERTIES(V9fsState, fsconf),
+    DEFINE_PROP_STRING("mount_tag", V9fsState, fsconf.tag),
+    DEFINE_PROP_STRING("fsdev", V9fsState, fsconf.fsdev_id),
     DEFINE_PROP_END_OF_LIST(),
 };
 

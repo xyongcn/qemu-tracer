@@ -18,6 +18,7 @@
  */
 
 #include "hw/hw.h"
+#include "qemu/error-report.h"
 #include "qemu/timer.h"
 #include "ui/qemu-spice.h"
 
@@ -105,7 +106,7 @@ static int rate_get_samples (struct audio_pcm_info *info, SpiceRateCtl *rate)
     bytes = muldiv64 (ticks, info->bytes_per_second, get_ticks_per_sec ());
     samples = (bytes - rate->bytes_sent) >> info->shift;
     if (samples < 0 || samples > 65536) {
-        fprintf (stderr, "Resetting rate control (%" PRId64 " samples)\n", samples);
+        error_report("Resetting rate control (%" PRId64 " samples)", samples);
         rate_start (rate);
         samples = 0;
     }
@@ -115,7 +116,8 @@ static int rate_get_samples (struct audio_pcm_info *info, SpiceRateCtl *rate)
 
 /* playback */
 
-static int line_out_init (HWVoiceOut *hw, struct audsettings *as)
+static int line_out_init(HWVoiceOut *hw, struct audsettings *as,
+                         void *drv_opaque)
 {
     SpiceVoiceOut *out = container_of (hw, SpiceVoiceOut, hw);
     struct audsettings settings;
@@ -243,7 +245,7 @@ static int line_out_ctl (HWVoiceOut *hw, int cmd, ...)
 
 /* record */
 
-static int line_in_init (HWVoiceIn *hw, struct audsettings *as)
+static int line_in_init(HWVoiceIn *hw, struct audsettings *as, void *drv_opaque)
 {
     SpiceVoiceIn *in = container_of (hw, SpiceVoiceIn, hw);
     struct audsettings settings;

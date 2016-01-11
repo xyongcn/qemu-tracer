@@ -18,83 +18,71 @@
  */
 
 #include "cpu.h"
-#include "exec/ioport.h"
-#include "helper.h"
+#include "exec/helper-proto.h"
+#include "exec/cpu_ldst.h"
+#include "exec/address-spaces.h"
 
-#if !defined(CONFIG_USER_ONLY)
-#include "exec/softmmu_exec.h"
-#endif /* !defined(CONFIG_USER_ONLY) */
-
-/* check if Port I/O is allowed in TSS */
-static inline void check_io(CPUX86State *env, int addr, int size)
+void helper_outb(CPUX86State *env, uint32_t port, uint32_t data)
 {
-    int io_offset, val, mask;
-
-    /* TSS must be a valid 32 bit one */
-    if (!(env->tr.flags & DESC_P_MASK) ||
-        ((env->tr.flags >> DESC_TYPE_SHIFT) & 0xf) != 9 ||
-        env->tr.limit < 103) {
-        goto fail;
-    }
-    io_offset = cpu_lduw_kernel(env, env->tr.base + 0x66);
-    io_offset += (addr >> 3);
-    /* Note: the check needs two bytes */
-    if ((io_offset + 1) > env->tr.limit) {
-        goto fail;
-    }
-    val = cpu_lduw_kernel(env, env->tr.base + io_offset);
-    val >>= (addr & 7);
-    mask = (1 << size) - 1;
-    /* all bits must be zero to allow the I/O */
-    if ((val & mask) != 0) {
-    fail:
-        raise_exception_err(env, EXCP0D_GPF, 0);
-    }
+#ifdef CONFIG_USER_ONLY
+    fprintf(stderr, "outb: port=0x%04x, data=%02x\n", port, data);
+#else
+    address_space_stb(&address_space_io, port, data,
+                      cpu_get_mem_attrs(env), NULL);
+#endif
 }
 
-void helper_check_iob(CPUX86State *env, uint32_t t0)
+target_ulong helper_inb(CPUX86State *env, uint32_t port)
 {
-    check_io(env, t0, 1);
+#ifdef CONFIG_USER_ONLY
+    fprintf(stderr, "inb: port=0x%04x\n", port);
+    return 0;
+#else
+    return address_space_ldub(&address_space_io, port,
+                              cpu_get_mem_attrs(env), NULL);
+#endif
 }
 
-void helper_check_iow(CPUX86State *env, uint32_t t0)
+void helper_outw(CPUX86State *env, uint32_t port, uint32_t data)
 {
-    check_io(env, t0, 2);
+#ifdef CONFIG_USER_ONLY
+    fprintf(stderr, "outw: port=0x%04x, data=%04x\n", port, data);
+#else
+    address_space_stw(&address_space_io, port, data,
+                      cpu_get_mem_attrs(env), NULL);
+#endif
 }
 
-void helper_check_iol(CPUX86State *env, uint32_t t0)
+target_ulong helper_inw(CPUX86State *env, uint32_t port)
 {
-    check_io(env, t0, 4);
+#ifdef CONFIG_USER_ONLY
+    fprintf(stderr, "inw: port=0x%04x\n", port);
+    return 0;
+#else
+    return address_space_lduw(&address_space_io, port,
+                              cpu_get_mem_attrs(env), NULL);
+#endif
 }
 
-void helper_outb(uint32_t port, uint32_t data)
+void helper_outl(CPUX86State *env, uint32_t port, uint32_t data)
 {
-    cpu_outb(port, data & 0xff);
+#ifdef CONFIG_USER_ONLY
+    fprintf(stderr, "outw: port=0x%04x, data=%08x\n", port, data);
+#else
+    address_space_stl(&address_space_io, port, data,
+                      cpu_get_mem_attrs(env), NULL);
+#endif
 }
 
-target_ulong helper_inb(uint32_t port)
+target_ulong helper_inl(CPUX86State *env, uint32_t port)
 {
-    return cpu_inb(port);
-}
-
-void helper_outw(uint32_t port, uint32_t data)
-{
-    cpu_outw(port, data & 0xffff);
-}
-
-target_ulong helper_inw(uint32_t port)
-{
-    return cpu_inw(port);
-}
-
-void helper_outl(uint32_t port, uint32_t data)
-{
-    cpu_outl(port, data);
-}
-
-target_ulong helper_inl(uint32_t port)
-{
-    return cpu_inl(port);
+#ifdef CONFIG_USER_ONLY
+    fprintf(stderr, "inl: port=0x%04x\n", port);
+    return 0;
+#else
+    return address_space_ldl(&address_space_io, port,
+                             cpu_get_mem_attrs(env), NULL);
+#endif
 }
 
 void helper_into(CPUX86State *env, int next_eip_addend)

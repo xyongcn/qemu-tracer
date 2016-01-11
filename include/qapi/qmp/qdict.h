@@ -16,6 +16,7 @@
 #include "qapi/qmp/qobject.h"
 #include "qapi/qmp/qlist.h"
 #include "qemu/queue.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 #define QDICT_BUCKET_MAX 512
@@ -55,19 +56,25 @@ const QDictEntry *qdict_next(const QDict *qdict, const QDictEntry *entry);
 /* High level helpers */
 double qdict_get_double(const QDict *qdict, const char *key);
 int64_t qdict_get_int(const QDict *qdict, const char *key);
-int qdict_get_bool(const QDict *qdict, const char *key);
+bool qdict_get_bool(const QDict *qdict, const char *key);
 QList *qdict_get_qlist(const QDict *qdict, const char *key);
 QDict *qdict_get_qdict(const QDict *qdict, const char *key);
 const char *qdict_get_str(const QDict *qdict, const char *key);
 int64_t qdict_get_try_int(const QDict *qdict, const char *key,
                           int64_t def_value);
-int qdict_get_try_bool(const QDict *qdict, const char *key, int def_value);
+bool qdict_get_try_bool(const QDict *qdict, const char *key, bool def_value);
 const char *qdict_get_try_str(const QDict *qdict, const char *key);
+
+void qdict_copy_default(QDict *dst, QDict *src, const char *key);
+void qdict_set_default_str(QDict *dst, const char *key, const char *val);
 
 QDict *qdict_clone_shallow(const QDict *src);
 void qdict_flatten(QDict *qdict);
 
 void qdict_extract_subqdict(QDict *src, QDict **dst, const char *start);
 void qdict_array_split(QDict *src, QList **dst);
+int qdict_array_entries(QDict *src, const char *subqdict);
+
+void qdict_join(QDict *dest, QDict *src, bool overwrite);
 
 #endif /* QDICT_H */

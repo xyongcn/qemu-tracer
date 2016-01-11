@@ -18,6 +18,7 @@
  */
 
 #include "hw/hw.h"
+#include "qemu/error-report.h"
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
 #include "trace.h"
@@ -260,6 +261,7 @@ static void g364fb_update_display(void *opaque)
         qemu_console_resize(s->con, s->width, s->height);
     }
 
+    memory_region_sync_dirty_bitmap(&s->mem_vram);
     if (s->ctla & CTLA_FORCE_BLANK) {
         g364fb_draw_blank(s);
     } else if (s->depth == 8) {
@@ -459,7 +461,6 @@ static const VMStateDescription vmstate_g364fb = {
     .name = "g364fb",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .post_load = g364fb_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_VBUFFER_UINT32(vram, G364State, 1, NULL, 0, vram_size),
@@ -490,7 +491,7 @@ static void g364fb_init(DeviceState *dev, G364State *s)
     memory_region_init_ram_ptr(&s->mem_vram, NULL, "vram",
                                s->vram_size, s->vram);
     vmstate_register_ram(&s->mem_vram, dev);
-    memory_region_set_coalescing(&s->mem_vram);
+    memory_region_set_log(&s->mem_vram, true, DIRTY_MEMORY_VGA);
 }
 
 #define TYPE_G364 "sysbus-g364"

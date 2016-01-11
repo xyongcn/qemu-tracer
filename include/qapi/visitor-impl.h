@@ -30,7 +30,7 @@ struct Visitor
     GenericList *(*next_list)(Visitor *v, GenericList **list, Error **errp);
     void (*end_list)(Visitor *v, Error **errp);
 
-    void (*type_enum)(Visitor *v, int *obj, const char *strings[],
+    void (*type_enum)(Visitor *v, int *obj, const char * const strings[],
                       const char *kind, const char *name, Error **errp);
     void (*get_next_type)(Visitor *v, int *kind, const int *qobjects,
                           const char *name, Error **errp);
@@ -42,13 +42,9 @@ struct Visitor
                         Error **errp);
 
     /* May be NULL */
-    void (*start_optional)(Visitor *v, bool *present, const char *name,
-                           Error **errp);
-    void (*end_optional)(Visitor *v, Error **errp);
+    void (*optional)(Visitor *v, bool *present, const char *name,
+                     Error **errp);
 
-    void (*start_handle)(Visitor *v, void **obj, const char *kind,
-                         const char *name, Error **errp);
-    void (*end_handle)(Visitor *v, Error **errp);
     void (*type_uint8)(Visitor *v, uint8_t *obj, const char *name, Error **errp);
     void (*type_uint16)(Visitor *v, uint16_t *obj, const char *name, Error **errp);
     void (*type_uint32)(Visitor *v, uint32_t *obj, const char *name, Error **errp);
@@ -59,11 +55,13 @@ struct Visitor
     void (*type_int64)(Visitor *v, int64_t *obj, const char *name, Error **errp);
     /* visit_type_size() falls back to (*type_uint64)() if type_size is unset */
     void (*type_size)(Visitor *v, uint64_t *obj, const char *name, Error **errp);
+    bool (*start_union)(Visitor *v, bool data_present, Error **errp);
+    void (*end_union)(Visitor *v, bool data_present, Error **errp);
 };
 
-void input_type_enum(Visitor *v, int *obj, const char *strings[],
+void input_type_enum(Visitor *v, int *obj, const char * const strings[],
                      const char *kind, const char *name, Error **errp);
-void output_type_enum(Visitor *v, int *obj, const char *strings[],
+void output_type_enum(Visitor *v, int *obj, const char * const strings[],
                       const char *kind, const char *name, Error **errp);
 
 #endif

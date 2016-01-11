@@ -24,6 +24,9 @@
 #ifndef TCG_TARGET_I386 
 #define TCG_TARGET_I386 1
 
+#define TCG_TARGET_INSN_UNIT_SIZE  1
+#define TCG_TARGET_TLB_DISPLACEMENT_BITS 31
+
 #ifdef __x86_64__
 # define TCG_TARGET_REG_BITS  64
 # define TCG_TARGET_NB_REGS   16
@@ -99,6 +102,8 @@ extern bool have_bmi1;
 #define TCG_TARGET_HAS_mulsh_i32        0
 
 #if TCG_TARGET_REG_BITS == 64
+#define TCG_TARGET_HAS_extrl_i64_i32    0
+#define TCG_TARGET_HAS_extrh_i64_i32    0
 #define TCG_TARGET_HAS_div2_i64         1
 #define TCG_TARGET_HAS_rot_i64          1
 #define TCG_TARGET_HAS_ext8s_i64        1
@@ -126,8 +131,6 @@ extern bool have_bmi1;
 #define TCG_TARGET_HAS_muluh_i64        0
 #define TCG_TARGET_HAS_mulsh_i64        0
 #endif
-
-#define TCG_TARGET_HAS_new_ldst         1
 
 #define TCG_TARGET_deposit_i32_valid(ofs, len) \
     (((ofs) == 0 && (len) == 8) || ((ofs) == 8 && (len) == 8) || \

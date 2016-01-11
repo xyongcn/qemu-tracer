@@ -30,7 +30,7 @@
 #include "sysemu/sysemu.h"
 #include "hw/devices.h"
 #include "hw/boards.h"
-#include "sysemu/blockdev.h"
+#include "sysemu/block-backend.h"
 #include "exec/address-spaces.h"
 
 #include "boot.h"
@@ -51,18 +51,10 @@
 #define ETHLITE_IRQ         1
 #define UARTLITE_IRQ        3
 
-static void machine_cpu_reset(MicroBlazeCPU *cpu)
-{
-    CPUMBState *env = &cpu->env;
-
-    env->pvr.regs[10] = 0x0c000000; /* spartan 3a dsp family.  */
-}
-
 static void
-petalogix_s3adsp1800_init(QEMUMachineInitArgs *args)
+petalogix_s3adsp1800_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *cpu_model = args->cpu_model;
+    ram_addr_t ram_size = machine->ram_size;
     DeviceState *dev;
     MicroBlazeCPU *cpu;
     DriveInfo *dinfo;
@@ -73,27 +65,26 @@ petalogix_s3adsp1800_init(QEMUMachineInitArgs *args)
     qemu_irq irq[32];
     MemoryRegion *sysmem = get_system_memory();
 
-    /* init CPUs */
-    if (cpu_model == NULL) {
-        cpu_model = "microblaze";
-    }
-    cpu = cpu_mb_init(cpu_model);
+    cpu = MICROBLAZE_CPU(object_new(TYPE_MICROBLAZE_CPU));
+    object_property_set_bool(OBJECT(cpu), true, "realized", &error_abort);
 
     /* Attach emulated BRAM through the LMB.  */
     memory_region_init_ram(phys_lmb_bram, NULL,
-                           "petalogix_s3adsp1800.lmb_bram", LMB_BRAM_SIZE);
+                           "petalogix_s3adsp1800.lmb_bram", LMB_BRAM_SIZE,
+                           &error_abort);
     vmstate_register_ram_global(phys_lmb_bram);
     memory_region_add_subregion(sysmem, 0x00000000, phys_lmb_bram);
 
-    memory_region_init_ram(phys_ram, NULL, "petalogix_s3adsp1800.ram", ram_size);
+    memory_region_init_ram(phys_ram, NULL, "petalogix_s3adsp1800.ram",
+                           ram_size, &error_abort);
     vmstate_register_ram_global(phys_ram);
     memory_region_add_subregion(sysmem, ddr_base, phys_ram);
 
     dinfo = drive_get(IF_PFLASH, 0, 0);
     pflash_cfi01_register(FLASH_BASEADDR,
                           NULL, "petalogix_s3adsp1800.flash", FLASH_SIZE,
-                          dinfo ? dinfo->bdrv : NULL, (64 * 1024),
-                          FLASH_SIZE >> 16,
+                          dinfo ? blk_by_legacy_dinfo(dinfo) : NULL,
+                          (64 * 1024), FLASH_SIZE >> 16,
                           1, 0x89, 0x18, 0x0000, 0x0, 1);
 
     dev = qdev_create(NULL, "xlnx.xps-intc");
@@ -128,9 +119,9 @@ petalogix_s3adsp1800_init(QEMUMachineInitArgs *args)
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq[ETHLITE_IRQ]);
 
     microblaze_load_kernel(cpu, ddr_base, ram_size,
-                           args->initrd_filename,
+                           machine->initrd_filename,
                            BINARY_DEVICE_TREE_FILE,
-                           machine_cpu_reset);
+                           NULL);
 }
 
 static QEMUMachine petalogix_s3adsp1800_machine = {

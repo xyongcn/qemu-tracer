@@ -1,5 +1,3 @@
-#include "exec/def-helper.h"
-
 DEF_HELPER_FLAGS_4(cc_compute_all, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 DEF_HELPER_FLAGS_4(cc_compute_c, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 
@@ -88,12 +86,12 @@ DEF_HELPER_1(wrmsr, void, env)
 DEF_HELPER_2(check_iob, void, env, i32)
 DEF_HELPER_2(check_iow, void, env, i32)
 DEF_HELPER_2(check_iol, void, env, i32)
-DEF_HELPER_2(outb, void, i32, i32)
-DEF_HELPER_1(inb, tl, i32)
-DEF_HELPER_2(outw, void, i32, i32)
-DEF_HELPER_1(inw, tl, i32)
-DEF_HELPER_2(outl, void, i32, i32)
-DEF_HELPER_1(inl, tl, i32)
+DEF_HELPER_3(outb, void, env, i32, i32)
+DEF_HELPER_2(inb, tl, env, i32)
+DEF_HELPER_3(outw, void, env, i32, i32)
+DEF_HELPER_2(inw, tl, env, i32)
+DEF_HELPER_3(outl, void, env, i32, i32)
+DEF_HELPER_2(inl, tl, env, i32)
 
 DEF_HELPER_3(svm_check_intercept_param, void, env, i32, i64)
 DEF_HELPER_3(vmexit, void, env, i32, i64)
@@ -219,5 +217,3 @@ DEF_HELPER_3(rcrl, tl, env, tl, tl)
 DEF_HELPER_3(rclq, tl, env, tl, tl)
 DEF_HELPER_3(rcrq, tl, env, tl, tl)
 #endif
-
-#include "exec/def-helper.h"

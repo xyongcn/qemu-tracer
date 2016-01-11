@@ -152,6 +152,28 @@ static void qdict_get_try_str_test(void)
     QDECREF(tests_dict);
 }
 
+static void qdict_defaults_test(void)
+{
+    QDict *dict, *copy;
+
+    dict = qdict_new();
+    copy = qdict_new();
+
+    qdict_set_default_str(dict, "foo", "abc");
+    qdict_set_default_str(dict, "foo", "def");
+    g_assert_cmpstr(qdict_get_str(dict, "foo"), ==, "abc");
+    qdict_set_default_str(dict, "bar", "ghi");
+
+    qdict_copy_default(copy, dict, "foo");
+    g_assert_cmpstr(qdict_get_str(copy, "foo"), ==, "abc");
+    qdict_set_default_str(copy, "bar", "xyz");
+    qdict_copy_default(copy, dict, "bar");
+    g_assert_cmpstr(qdict_get_str(copy, "bar"), ==, "xyz");
+
+    QDECREF(copy);
+    QDECREF(dict);
+}
+
 static void qdict_haskey_not_test(void)
 {
     QDict *tests_dict = qdict_new();
@@ -444,6 +466,135 @@ static void qdict_array_split_test(void)
     QDECREF(test_dict);
 }
 
+static void qdict_array_entries_test(void)
+{
+    QDict *dict = qdict_new();
+
+    g_assert_cmpint(qdict_array_entries(dict, "foo."), ==, 0);
+
+    qdict_put(dict, "bar", qint_from_int(0));
+    qdict_put(dict, "baz.0", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, "foo."), ==, 0);
+
+    qdict_put(dict, "foo.1", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, "foo."), ==, -EINVAL);
+    qdict_put(dict, "foo.0", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, "foo."), ==, 2);
+    qdict_put(dict, "foo.bar", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, "foo."), ==, -EINVAL);
+    qdict_del(dict, "foo.bar");
+
+    qdict_put(dict, "foo.2.a", qint_from_int(0));
+    qdict_put(dict, "foo.2.b", qint_from_int(0));
+    qdict_put(dict, "foo.2.c", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, "foo."), ==, 3);
+    g_assert_cmpint(qdict_array_entries(dict, ""), ==, -EINVAL);
+
+    QDECREF(dict);
+
+    dict = qdict_new();
+    qdict_put(dict, "1", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, ""), ==, -EINVAL);
+    qdict_put(dict, "0", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, ""), ==, 2);
+    qdict_put(dict, "bar", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, ""), ==, -EINVAL);
+    qdict_del(dict, "bar");
+
+    qdict_put(dict, "2.a", qint_from_int(0));
+    qdict_put(dict, "2.b", qint_from_int(0));
+    qdict_put(dict, "2.c", qint_from_int(0));
+    g_assert_cmpint(qdict_array_entries(dict, ""), ==, 3);
+
+    QDECREF(dict);
+}
+
+static void qdict_join_test(void)
+{
+    QDict *dict1, *dict2;
+    bool overwrite = false;
+    int i;
+
+    dict1 = qdict_new();
+    dict2 = qdict_new();
+
+
+    /* Test everything once without overwrite and once with */
+    do
+    {
+        /* Test empty dicts */
+        qdict_join(dict1, dict2, overwrite);
+
+        g_assert(qdict_size(dict1) == 0);
+        g_assert(qdict_size(dict2) == 0);
+
+
+        /* First iteration: Test movement */
+        /* Second iteration: Test empty source and non-empty destination */
+        qdict_put(dict2, "foo", qint_from_int(42));
+
+        for (i = 0; i < 2; i++) {
+            qdict_join(dict1, dict2, overwrite);
+
+            g_assert(qdict_size(dict1) == 1);
+            g_assert(qdict_size(dict2) == 0);
+
+            g_assert(qdict_get_int(dict1, "foo") == 42);
+        }
+
+
+        /* Test non-empty source and destination without conflict */
+        qdict_put(dict2, "bar", qint_from_int(23));
+
+        qdict_join(dict1, dict2, overwrite);
+
+        g_assert(qdict_size(dict1) == 2);
+        g_assert(qdict_size(dict2) == 0);
+
+        g_assert(qdict_get_int(dict1, "foo") == 42);
+        g_assert(qdict_get_int(dict1, "bar") == 23);
+
+
+        /* Test conflict */
+        qdict_put(dict2, "foo", qint_from_int(84));
+
+        qdict_join(dict1, dict2, overwrite);
+
+        g_assert(qdict_size(dict1) == 2);
+        g_assert(qdict_size(dict2) == !overwrite);
+
+        g_assert(qdict_get_int(dict1, "foo") == overwrite ? 84 : 42);
+        g_assert(qdict_get_int(dict1, "bar") == 23);
+
+        if (!overwrite) {
+            g_assert(qdict_get_int(dict2, "foo") == 84);
+        }
+
+
+        /* Check the references */
+        g_assert(qdict_get(dict1, "foo")->refcnt == 1);
+        g_assert(qdict_get(dict1, "bar")->refcnt == 1);
+
+        if (!overwrite) {
+            g_assert(qdict_get(dict2, "foo")->refcnt == 1);
+        }
+
+
+        /* Clean up */
+        qdict_del(dict1, "foo");
+        qdict_del(dict1, "bar");
+
+        if (!overwrite) {
+            qdict_del(dict2, "foo");
+        }
+    }
+    while (overwrite ^= true);
+
+
+    QDECREF(dict1);
+    QDECREF(dict2);
+}
+
 /*
  * Errors test-cases
  */
@@ -577,6 +728,7 @@ int main(int argc, char **argv)
     g_test_add_func("/public/get_try_int", qdict_get_try_int_test);
     g_test_add_func("/public/get_str", qdict_get_str_test);
     g_test_add_func("/public/get_try_str", qdict_get_try_str_test);
+    g_test_add_func("/public/defaults", qdict_defaults_test);
     g_test_add_func("/public/haskey_not", qdict_haskey_not_test);
     g_test_add_func("/public/haskey", qdict_haskey_test);
     g_test_add_func("/public/del", qdict_del_test);
@@ -584,6 +736,8 @@ int main(int argc, char **argv)
     g_test_add_func("/public/iterapi", qdict_iterapi_test);
     g_test_add_func("/public/flatten", qdict_flatten_test);
     g_test_add_func("/public/array_split", qdict_array_split_test);
+    g_test_add_func("/public/array_entries", qdict_array_entries_test);
+    g_test_add_func("/public/join", qdict_join_test);
 
     g_test_add_func("/errors/put_exists", qdict_put_exists_test);
     g_test_add_func("/errors/get_not_exists", qdict_get_not_exists_test);

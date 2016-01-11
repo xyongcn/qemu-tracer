@@ -77,6 +77,15 @@ static inline int64_t systick_scale(nvic_state *s)
 
 static void systick_reload(nvic_state *s, int reset)
 {
+    /* The Cortex-M3 Devices Generic User Guide says that "When the
+     * ENABLE bit is set to 1, the counter loads the RELOAD value from the
+     * SYST RVR register and then counts down". So, we need to check the
+     * ENABLE bit before reloading the value.
+     */
+    if ((s->systick.control & SYSTICK_ENABLE) == 0) {
+        return;
+    }
+
     if (reset)
         s->systick.tick = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     s->systick.tick += (s->systick.reload + 1) * systick_scale(s);
@@ -122,7 +131,7 @@ int armv7m_nvic_acknowledge_irq(void *opaque)
     nvic_state *s = (nvic_state *)opaque;
     uint32_t irq;
 
-    irq = gic_acknowledge_irq(&s->gic, 0);
+    irq = gic_acknowledge_irq(&s->gic, 0, MEMTXATTRS_UNSPECIFIED);
     if (irq == 1023)
         hw_error("Interrupt but no vector\n");
     if (irq >= 32)
@@ -135,7 +144,7 @@ void armv7m_nvic_complete_irq(void *opaque, int irq)
     nvic_state *s = (nvic_state *)opaque;
     if (irq >= 16)
         irq += 16;
-    gic_complete_irq(&s->gic, 0, irq);
+    gic_complete_irq(&s->gic, 0, irq, MEMTXATTRS_UNSPECIFIED);
 }
 
 static uint32_t nvic_readl(nvic_state *s, uint32_t offset)
@@ -173,7 +182,7 @@ static uint32_t nvic_readl(nvic_state *s, uint32_t offset)
         return 10000;
     case 0xd00: /* CPUID Base.  */
         cpu = ARM_CPU(current_cpu);
-        return cpu->env.cp15.c0_cpuid;
+        return cpu->midr;
     case 0xd04: /* Interrupt Control State.  */
         /* VECTACTIVE */
         val = s->gic.running_irq[0];
@@ -211,7 +220,7 @@ static uint32_t nvic_readl(nvic_state *s, uint32_t offset)
         cpu = ARM_CPU(current_cpu);
         return cpu->env.v7m.vecbase;
     case 0xd0c: /* Application Interrupt/Reset Control.  */
-        return 0xfa05000;
+        return 0xfa050000;
     case 0xd10: /* System Control.  */
         /* TODO: Implement SLEEPONEXIT.  */
         return 0;
@@ -346,6 +355,9 @@ static void nvic_writel(nvic_state *s, uint32_t offset, uint32_t value)
             if (value & 5) {
                 qemu_log_mask(LOG_UNIMP, "AIRCR system reset unimplemented\n");
             }
+            if (value & 0x700) {
+                qemu_log_mask(LOG_UNIMP, "PRIGROUP unimplemented\n");
+            }
         }
         break;
     case 0xd10: /* System Control.  */
@@ -443,12 +455,11 @@ static const VMStateDescription vmstate_nvic = {
     .name = "armv7m_nvic",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(systick.control, nvic_state),
         VMSTATE_UINT32(systick.reload, nvic_state),
         VMSTATE_INT64(systick.tick, nvic_state),
-        VMSTATE_TIMER(systick.timer, nvic_state),
+        VMSTATE_TIMER_PTR(systick.timer, nvic_state),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -463,10 +474,10 @@ static void armv7m_nvic_reset(DeviceState *dev)
      * as enabled by default, and with a priority mask which allows
      * all interrupts through.
      */
-    s->gic.cpu_enabled[0] = true;
+    s->gic.cpu_ctlr[0] = GICC_CTLR_EN_GRP0;
     s->gic.priority_mask[0] = 0x100;
     /* The NVIC as a whole is always enabled. */
-    s->gic.enabled = true;
+    s->gic.ctlr = 1;
     systick_reset(s);
 }
 
@@ -474,17 +485,19 @@ static void armv7m_nvic_realize(DeviceState *dev, Error **errp)
 {
     nvic_state *s = NVIC(dev);
     NVICClass *nc = NVIC_GET_CLASS(s);
+    Error *local_err = NULL;
 
     /* The NVIC always has only one CPU */
     s->gic.num_cpu = 1;
     /* Tell the common code we're an NVIC */
     s->gic.revision = 0xffffffff;
     s->num_irq = s->gic.num_irq;
-    nc->parent_realize(dev, errp);
-    if (error_is_set(errp)) {
+    nc->parent_realize(dev, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
         return;
     }
-    gic_init_irqs_and_distributor(&s->gic, s->num_irq);
+    gic_init_irqs_and_distributor(&s->gic);
     /* The NVIC and system controller register area looks like this:
      *  0..0xff : system control registers, including systick
      *  0x100..0xcff : GIC-like registers

@@ -1,5 +1,3 @@
-#include "exec/def-helper.h"
-
 DEF_HELPER_1(ldtlb, void, env)
 DEF_HELPER_1(raise_illegal_instruction, noreturn, env)
 DEF_HELPER_1(raise_slot_illegal_instruction, noreturn, env)
@@ -13,7 +11,6 @@ DEF_HELPER_3(movcal, void, env, i32, i32)
 DEF_HELPER_1(discard_movcal_backup, void, env)
 DEF_HELPER_2(ocbi, void, env, i32)
 
-DEF_HELPER_3(div1, i32, env, i32, i32)
 DEF_HELPER_3(macl, void, env, i32, i32)
 DEF_HELPER_3(macw, void, env, i32, i32)
 
@@ -46,5 +43,3 @@ DEF_HELPER_2(ftrc_FT, i32, env, f32)
 DEF_HELPER_2(ftrc_DT, i32, env, f64)
 DEF_HELPER_3(fipr, void, env, i32, i32)
 DEF_HELPER_2(ftrv, void, env, i32)
-
-#include "exec/def-helper.h"

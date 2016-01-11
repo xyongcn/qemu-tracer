@@ -211,7 +211,7 @@ static void usage(const char *cmd)
 "  -V, --version     print version information and exit\n"
 "  -d, --daemonize   become a daemon\n"
 #ifdef _WIN32
-"  -s, --service     service commands: install, uninstall\n"
+"  -s, --service     service commands: install, uninstall, vss-install, vss-uninstall\n"
 #endif
 "  -b, --blacklist   comma-separated list of RPCs to disable (no spaces, \"?\"\n"
 "                    to list available RPCs)\n"
@@ -274,7 +274,7 @@ static void ga_log(const gchar *domain, GLogLevelFlags level,
 
     level &= G_LOG_LEVEL_MASK;
 #ifndef _WIN32
-    if (domain && strcmp(domain, "syslog") == 0) {
+    if (g_strcmp0(domain, "syslog") == 0) {
         syslog(LOG_INFO, "%s: %s", level_str, msg);
     } else if (level & s->log_level) {
 #else
@@ -578,7 +578,7 @@ static void process_event(JSONMessageParser *parser, QList *tokens)
         qdict = qdict_new();
         if (!err) {
             g_warning("failed to parse event: unknown error");
-            error_set(&err, QERR_JSON_PARSING);
+            error_setg(&err, QERR_JSON_PARSING);
         } else {
             g_warning("failed to parse event: %s", error_get_pretty(err));
         }
@@ -598,13 +598,13 @@ static void process_event(JSONMessageParser *parser, QList *tokens)
             QDECREF(qdict);
             qdict = qdict_new();
             g_warning("unrecognized payload format");
-            error_set(&err, QERR_UNSUPPORTED);
+            error_setg(&err, QERR_UNSUPPORTED);
             qdict_put_obj(qdict, "error", qmp_build_error_object(err));
             error_free(err);
         }
         ret = send_response(s, QOBJECT(qdict));
-        if (ret) {
-            g_warning("error sending error response: %s", strerror(ret));
+        if (ret < 0) {
+            g_warning("error sending error response: %s", strerror(-ret));
         }
     }
 
@@ -910,6 +910,7 @@ int64_t ga_get_fd_handle(GAState *s, Error **errp)
 
     if (!write_persistent_state(&s->pstate, s->pstate_filepath)) {
         error_setg(errp, "failed to commit persistent state to disk");
+        return -1;
     }
 
     return handle;
@@ -1035,6 +1036,14 @@ int main(int argc, char **argv)
             } else if (strcmp(service, "uninstall") == 0) {
                 ga_uninstall_vss_provider();
                 return ga_uninstall_service();
+            } else if (strcmp(service, "vss-install") == 0) {
+                if (ga_install_vss_provider()) {
+                    return EXIT_FAILURE;
+                }
+                return EXIT_SUCCESS;
+            } else if (strcmp(service, "vss-uninstall") == 0) {
+                ga_uninstall_vss_provider();
+                return EXIT_SUCCESS;
             } else {
                 printf("Unknown service command.\n");
                 return EXIT_FAILURE;
@@ -1110,7 +1119,7 @@ int main(int argc, char **argv)
 
     if (ga_is_frozen(s)) {
         if (daemonize) {
-            /* delay opening/locking of pidfile till filesystem are unfrozen */
+            /* delay opening/locking of pidfile till filesystems are unfrozen */
             s->deferred_options.pid_filepath = pid_filepath;
             become_daemon(NULL);
         }
@@ -1143,6 +1152,7 @@ int main(int argc, char **argv)
         goto out_bad;
     }
 
+    blacklist = ga_command_blacklist_init(blacklist);
     if (blacklist) {
         s->blacklist = blacklist;
         do {

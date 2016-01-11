@@ -23,7 +23,9 @@
 #include <signal.h>
 #include <setjmp.h>
 #include "hw/qdev-core.h"
+#include "disas/bfd.h"
 #include "exec/hwaddr.h"
+#include "exec/memattrs.h"
 #include "qemu/queue.h"
 #include "qemu/thread.h"
 #include "qemu/tls.h"
@@ -80,6 +82,12 @@ struct TranslationBlock;
  * @has_work: Callback for checking if there is work to do.
  * @do_interrupt: Callback for interrupt handling.
  * @do_unassigned_access: Callback for unassigned access handling.
+ * @do_unaligned_access: Callback for unaligned access handling, if
+ * the target defines #ALIGNED_ONLY.
+ * @virtio_is_big_endian: Callback to return %true if a CPU which supports
+ * runtime configurable endianness is currently big-endian. Non-configurable
+ * CPUs can use the default implementation of this method. This method should
+ * not be used by any callers other than the pre-1.0 virtio devices.
  * @memory_rw_debug: Callback for GDB memory access.
  * @dump_state: Callback for dumping state.
  * @dump_statistics: Callback for dumping statistics.
@@ -93,9 +101,24 @@ struct TranslationBlock;
  * @get_phys_page_debug: Callback for obtaining a physical address.
  * @gdb_read_register: Callback for letting GDB read a register.
  * @gdb_write_register: Callback for letting GDB write a register.
+ * @debug_excp_handler: Callback for handling debug exceptions.
+ * @write_elf64_note: Callback for writing a CPU-specific ELF note to a
+ * 64-bit VM coredump.
+ * @write_elf32_qemunote: Callback for writing a CPU- and QEMU-specific ELF
+ * note to a 32-bit VM coredump.
+ * @write_elf32_note: Callback for writing a CPU-specific ELF note to a
+ * 32-bit VM coredump.
+ * @write_elf32_qemunote: Callback for writing a CPU- and QEMU-specific ELF
+ * note to a 32-bit VM coredump.
  * @vmsd: State description for migration.
  * @gdb_num_core_regs: Number of core registers accessible to GDB.
  * @gdb_core_xml_file: File name for core registers GDB XML description.
+ * @gdb_stop_before_watchpoint: Indicates whether GDB expects the CPU to stop
+ *           before the insn which triggers a watchpoint rather than after it.
+ * @cpu_exec_enter: Callback for cpu_exec preparation.
+ * @cpu_exec_exit: Callback for cpu_exec cleanup.
+ * @cpu_exec_interrupt: Callback for processing interrupts in cpu_exec.
+ * @disas_set_info: Setup architecture specific components of disassembly info
  *
  * Represents a CPU family or model.
  */
@@ -112,6 +135,9 @@ typedef struct CPUClass {
     bool (*has_work)(CPUState *cpu);
     void (*do_interrupt)(CPUState *cpu);
     CPUUnassignedAccess do_unassigned_access;
+    void (*do_unaligned_access)(CPUState *cpu, vaddr addr,
+                                int is_write, int is_user, uintptr_t retaddr);
+    bool (*virtio_is_big_endian)(CPUState *cpu);
     int (*memory_rw_debug)(CPUState *cpu, vaddr addr,
                            uint8_t *buf, int len, bool is_write);
     void (*dump_state)(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
@@ -129,6 +155,7 @@ typedef struct CPUClass {
     hwaddr (*get_phys_page_debug)(CPUState *cpu, vaddr addr);
     int (*gdb_read_register)(CPUState *cpu, uint8_t *buf, int reg);
     int (*gdb_write_register)(CPUState *cpu, uint8_t *buf, int reg);
+    void (*debug_excp_handler)(CPUState *cpu);
 
     int (*write_elf64_note)(WriteCoreDumpFunction f, CPUState *cpu,
                             int cpuid, void *opaque);
@@ -142,6 +169,13 @@ typedef struct CPUClass {
     const struct VMStateDescription *vmsd;
     int gdb_num_core_regs;
     const char *gdb_core_xml_file;
+    bool gdb_stop_before_watchpoint;
+
+    void (*cpu_exec_enter)(CPUState *cpu);
+    void (*cpu_exec_exit)(CPUState *cpu);
+    bool (*cpu_exec_interrupt)(CPUState *cpu, int interrupt_request);
+
+    void (*disas_set_info)(CPUState *cpu, disassemble_info *info);
 } CPUClass;
 
 #ifdef HOST_WORDS_BIGENDIAN
@@ -164,7 +198,9 @@ typedef struct CPUBreakpoint {
 
 typedef struct CPUWatchpoint {
     vaddr vaddr;
-    vaddr len_mask;
+    vaddr len;
+    vaddr hitaddr;
+    MemTxAttrs hitattrs;
     int flags; /* BP_* */
     QTAILQ_ENTRY(CPUWatchpoint) entry;
 } CPUWatchpoint;
@@ -195,7 +231,9 @@ struct kvm_run;
  * @icount_decr: Number of cycles left, with interrupt flag in high bit.
  * This allows a single read-compare-cbranch-write sequence to test
  * for both decrementer underflow and exceptions.
- * @can_do_io: Nonzero if memory-mapped IO is safe.
+ * @can_do_io: Nonzero if memory-mapped IO is safe. Deterministic execution
+ * requires that IO only be performed on the last instruction of a TB
+ * so that interrupts take effect immediately.
  * @env_ptr: Pointer to subclass-specific CPUArchState field.
  * @current_tb: Currently executing TB.
  * @gdb_regs: Additional GDB registers.
@@ -238,6 +276,7 @@ struct CPUState {
     sigjmp_buf jmp_env;
 
     AddressSpace *as;
+    struct AddressSpaceDispatch *memory_dispatch;
     MemoryListener *tcg_as_listener;
 
     void *env_ptr; /* CPUArchState */
@@ -290,6 +329,8 @@ extern struct CPUTailQ cpus;
 #define CPU_FOREACH(cpu) QTAILQ_FOREACH(cpu, &cpus, node)
 #define CPU_FOREACH_SAFE(cpu, next_cpu) \
     QTAILQ_FOREACH_SAFE(cpu, &cpus, node, next_cpu)
+#define CPU_FOREACH_REVERSE(cpu) \
+    QTAILQ_FOREACH_REVERSE(cpu, &cpus, CPUTailQ, node)
 #define first_cpu QTAILQ_FIRST(&cpus)
 
 DECLARE_TLS(CPUState *, current_cpu);
@@ -544,8 +585,7 @@ void cpu_interrupt(CPUState *cpu, int mask);
 
 #endif /* USER_ONLY */
 
-#ifndef CONFIG_USER_ONLY
-
+#ifdef CONFIG_SOFTMMU
 static inline void cpu_unassigned_access(CPUState *cpu, hwaddr addr,
                                          bool is_write, bool is_exec,
                                          int opaque, unsigned size)
@@ -557,7 +597,29 @@ static inline void cpu_unassigned_access(CPUState *cpu, hwaddr addr,
     }
 }
 
+static inline void cpu_unaligned_access(CPUState *cpu, vaddr addr,
+                                        int is_write, int is_user,
+                                        uintptr_t retaddr)
+{
+    CPUClass *cc = CPU_GET_CLASS(cpu);
+
+    cc->do_unaligned_access(cpu, addr, is_write, is_user, retaddr);
+}
 #endif
+
+/**
+ * cpu_set_pc:
+ * @cpu: The CPU to set the program counter for.
+ * @addr: Program counter value.
+ *
+ * Sets the program counter for a CPU.
+ */
+static inline void cpu_set_pc(CPUState *cpu, vaddr addr)
+{
+    CPUClass *cc = CPU_GET_CLASS(cpu);
+
+    cc->set_pc(cpu, addr);
+}
 
 /**
  * cpu_reset_interrupt:
@@ -610,9 +672,12 @@ void cpu_single_step(CPUState *cpu, int enabled);
 #define BP_MEM_WRITE          0x02
 #define BP_MEM_ACCESS         (BP_MEM_READ | BP_MEM_WRITE)
 #define BP_STOP_BEFORE_ACCESS 0x04
-#define BP_WATCHPOINT_HIT     0x08
+/* 0x08 currently unused */
 #define BP_GDB                0x10
 #define BP_CPU                0x20
+#define BP_WATCHPOINT_HIT_READ 0x40
+#define BP_WATCHPOINT_HIT_WRITE 0x80
+#define BP_WATCHPOINT_HIT (BP_WATCHPOINT_HIT_READ | BP_WATCHPOINT_HIT_WRITE)
 
 int cpu_breakpoint_insert(CPUState *cpu, vaddr pc, int flags,
                           CPUBreakpoint **breakpoint);
@@ -629,6 +694,7 @@ void cpu_watchpoint_remove_all(CPUState *cpu, int mask);
 
 void QEMU_NORETURN cpu_abort(CPUState *cpu, const char *fmt, ...)
     GCC_FMT_ATTR(2, 3);
+void cpu_exec_exit(CPUState *cpu);
 
 #ifdef CONFIG_SOFTMMU
 extern const struct VMStateDescription vmstate_cpu_common;
