@@ -542,7 +542,7 @@ int cpu_exec(CPUState *cpu)
                             } else {
                                 strcpy(modulename,"");
                             }                             
-                            qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx","TARGET_FMT_lx",%s,"TARGET_FMT_lx,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,esp,modulename,env->eip);
+                            qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx","TARGET_FMT_lx",%s,"TARGET_FMT_lx","TARGET_FMT_lx,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,esp,modulename,env->eip,tb->pc+tb->size-2);
                             int id=funcistraced(env->eip);
                             if(id!=-1){
                                 int i;
