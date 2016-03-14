@@ -340,7 +340,7 @@ static void cpu_handle_debug_exception(CPUState *cpu)
 }
 
 extern target_ulong kernel_start,kernel_end,funcaddr[];
-extern char funcargv[][6];
+extern char funcargv[][6],target[];
 extern int funccount;
 const int argorder[6]={R_EDI,R_ESI,R_EDX,R_ECX,8,9};
 
@@ -535,26 +535,29 @@ int cpu_exec(CPUState *cpu)
                     
                     if(qemu_loglevel_mask(CPU_LOG_FUNC)){
                         if(tb->type==TB_CALL){
-                            target_ulong pid=env->cr[3],esp=env->regs[R_ESP];
-                            char modulename[64-sizeof(unsigned long)];
+                            target_ulong tid=env->regs[R_ESP]&0xffffe000,current;
+                            char processname[16];	
+                            cpu_memory_rw_debug(cpu,tid,(uint8_t *)&current,sizeof(current),0);
+                            cpu_memory_rw_debug(cpu,current+0x2e4,(uint8_t *)&processname,sizeof(processname),0);
+                            if(strstr(processname,target))
+                                qemu_log("%"PRIx64","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,tb->pc+tb->size-2,env->eip);
+                        }
+                            /*target_ulong pid=env->cr[3],esp=env->regs[R_ESP];
+                            char modulename[64-sizeof(unsigned long)]="";
                             if(tb->pc>=kernel_start && tb->pc<=kernel_end){
                                 strcpy(modulename,"kernel");
-                            } else {
-                                strcpy(modulename,"");
                             }                             
                             qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx","TARGET_FMT_lx",%s,"TARGET_FMT_lx","TARGET_FMT_lx,qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,esp,modulename,env->eip,tb->pc+tb->size-2);
-                            int id=funcistraced(env->eip);
-                            if(id!=-1){
+                            if(funcistraced(env->eip)!=-1){
                                 int i;
                                 for(i=0;funcargv[id][i]!='\0';i++){
                                     switch(funcargv[id][i]){
                                         case 'v':break;
                                         case 'i':qemu_log(","TARGET_FMT_ld,env->regs[argorder[i]]);break;
-                                        case 's':{
+                                        case 's':
                                             char tmp[100];
                                             cpu_memory_rw_debug(cpu,env->regs[argorder[i]],(uint8_t *)&tmp,sizeof(tmp),0);
                                             qemu_log(",%s",tmp);
-                                            }
                                             break;
                                         case 'o':qemu_log(","TARGET_FMT_lx,env->regs[argorder[i]]);break;
                                     }
@@ -563,7 +566,7 @@ int cpu_exec(CPUState *cpu)
                             qemu_log("\n");
                         }else if(tb->type==TB_RET){
                             qemu_log("0x%"PRIx64",0x"TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),env->cr[3],env->regs[R_ESP]-sizeof(target_ulong));
-                        }
+                        }*/
                     }                    
 
                     switch (next_tb & TB_EXIT_MASK) {

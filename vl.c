@@ -127,11 +127,11 @@ typedef uint64_t target_ulong;
 #define TARGET_lx "%" PRIx64
 //~ typedef uint32_t target_ulong;
 //~ #define TARGET_lx "%08x"
-#define FUNC_MAX 35000
+#define FUNC_MAX 30000
 #define PRAM_MAX 6
 target_ulong kernel_start,kernel_end,funcaddr[FUNC_MAX];
 int funccount=0;
-char funcargv[FUNC_MAX][PRAM_MAX];
+char funcargv[FUNC_MAX][PRAM_MAX],target[16];
 
 #define MAX_VIRTIO_CONSOLES 1
 #define MAX_SCLP_CONSOLES 1
@@ -4106,7 +4106,7 @@ int main(int argc, char **argv, char **envp)
         
         if (qemu_loglevel_mask(CPU_LOG_FUNC)) {    
             FILE *fp = fopen("configs.txt", "r");
-            if(fscanf(fp,TARGET_lx TARGET_lx,&kernel_start,&kernel_end)){
+            if(fscanf(fp,TARGET_lx TARGET_lx" %s",&kernel_start,&kernel_end,target)){
                 while(fscanf(fp,TARGET_lx" %s",&funcaddr[funccount],funcargv[funccount])!=-1)
                     funccount++;
             }
