@@ -541,9 +541,9 @@ int cpu_exec(CPUState *cpu)
                             cpu_memory_rw_debug(cpu,current+0x5e0,(uint8_t *)&processname,sizeof(processname),0);
                             if(strstr(processname,target)){
 				if(tb->type==TB_CALL)
-                                    qemu_log("C %s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-2,env->eip,env->cr[3],tid);
+                                    qemu_log("C,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-2,env->eip,env->cr[3],tid,env->regs[R_ESP]);
 				else if(tb->type==TB_RET)
-				    qemu_log("R %s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-2,env->eip,env->cr[3],tid);
+				    qemu_log("R,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-2,env->eip,env->cr[3],tid,env->regs[R_ESP]-sizeof(target_ulong));
 			    }
                                 //qemu_log("%"PRIx64","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,tb->pc+tb->size-2,env->eip);
                         }
