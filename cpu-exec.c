@@ -344,7 +344,7 @@ extern char funcargv[][6],target[];
 extern int funccount;
 const int argorder[6]={R_EDI,R_ESI,R_EDX,R_ECX,8,9};
 
-/*static int funcistraced(target_ulong target)
+static int funcistraced(target_ulong target)
 {
     int low=0,high=funccount-1,mid;
     while(low<=high){
@@ -357,7 +357,7 @@ const int argorder[6]={R_EDI,R_ESI,R_EDX,R_ECX,8,9};
             return mid;
     }
     return -1;
-}*/
+}
 
 /* main execution loop */
 
@@ -535,15 +535,17 @@ int cpu_exec(CPUState *cpu)
                     
                     if(qemu_loglevel_mask(CPU_LOG_FUNC)){
                         if(tb->type==TB_CALL || tb->type==TB_RET){
-                            target_ulong tid=env->regs[R_ESP]&0xffffffffffffc000,current;
-                            char processname[16];	
+                            target_ulong esp=env->regs[R_ESP],tid=esp&0xffffffffffffc000,current;
+                            char processname[16];
                             cpu_memory_rw_debug(cpu,tid,(uint8_t *)&current,sizeof(current),0);
                             cpu_memory_rw_debug(cpu,current+0x5e0,(uint8_t *)&processname,sizeof(processname),0);
                             if(strstr(processname,target)){
 				if(tb->type==TB_CALL)
-                                    qemu_log("C,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-2,env->eip,env->cr[3],tid,env->regs[R_ESP]);
+				    if(esp<0xf000000000000000 || funcistraced(env->eip)!=-1)
+                                    	qemu_log("C,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-2,env->eip,env->cr[3],tid,esp);
 				else if(tb->type==TB_RET)
-				    qemu_log("R,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-1,env->eip,env->cr[3],tid,env->regs[R_ESP]-sizeof(target_ulong));
+				    if(esp<0xf000000000000000)
+				    	qemu_log("R,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-1,env->eip,env->cr[3],tid,esp-sizeof(target_ulong));
 			    }
                                 //qemu_log("%"PRIx64","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),pid,tb->pc+tb->size-2,env->eip);
                         }
