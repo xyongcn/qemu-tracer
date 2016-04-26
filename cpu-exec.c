@@ -540,10 +540,10 @@ int cpu_exec(CPUState *cpu)
                             cpu_memory_rw_debug(cpu,tid,(uint8_t *)&current,sizeof(current),0);
                             cpu_memory_rw_debug(cpu,current+0x5e0,(uint8_t *)&processname,sizeof(processname),0);
                             if(strstr(processname,target)){
-				if(tb->type==TB_CALL)
+				if(tb->type==TB_CALL){
 				    if(esp<0xf000000000000000 || funcistraced(env->eip)!=-1)
                                     	qemu_log("C,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-2,env->eip,env->cr[3],tid,esp);
-				else if(tb->type==TB_RET)
+				}else if(tb->type==TB_RET)
 				    if(esp<0xf000000000000000)
 				    	qemu_log("R,%s,"TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx","TARGET_FMT_lx"\n",processname,tb->pc+tb->size-1,env->eip,env->cr[3],tid,esp-sizeof(target_ulong));
 			    }
