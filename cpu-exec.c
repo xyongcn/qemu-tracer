@@ -534,8 +534,7 @@ int cpu_exec(CPUState *cpu)
                     next_tb = cpu_tb_exec(cpu, tc_ptr);
                     
                     if(qemu_loglevel_mask(CPU_LOG_FUNC)){
-                        
-                        if(funcistraced(env->eip)!=-1){
+                        if(funcistraced(env->eip)!=-1 && (next_tb & TB_EXIT_MASK)==0){
                             if(tb->type==TB_CALL){
                                 target_ulong esp=env->regs[R_ESP],tid=esp&0xffffffffffffc000,current;
                                 char processname[16];
@@ -555,30 +554,8 @@ int cpu_exec(CPUState *cpu)
                                     qemu_log("\n");
                                 }
                             }
-                        }
-                        
-                        /*if(tb->type==TB_CALL){
-                            target_ulong esp=env->regs[R_ESP],tid=esp&0xffffffffffffc000,current;
-                            char processname[16];
-                            cpu_memory_rw_debug(cpu,tid,(uint8_t *)&current,sizeof(current),0);
-                            cpu_memory_rw_debug(cpu,current+0x5e0,(uint8_t *)&processname,sizeof(processname),0);
-                            if(strstr(processname,target)){
-                                if(funcistraced(env->eip)!=-1){
-                                    target_ulong ebp=env->regs[R_EBP],eip=env->eip;                         
-                                    int i;
-                                    qemu_log("calling "TARGET_FMT_lx"\n", eip);
-                                    eip=tb->pc+tb->size;
-                                    for(i=0;ebp!=0&&i<20;i++){
-                                        qemu_log("ebp:0x"TARGET_FMT_lx" eip:0x"TARGET_FMT_lx"\n", ebp, eip);
-                                        cpu_memory_rw_debug(cpu,ebp+4,(uint8_t *)&eip,sizeof(eip),0);
-                                        cpu_memory_rw_debug(cpu,ebp,(uint8_t *)&ebp,sizeof(ebp),0);
-                                    }
-                                    qemu_log("\n");
-                                }
-                            }
-                        }*/                        
-                        /*
-                        if(tb->type==TB_CALL || tb->type==TB_RET){
+                        }                 
+                        /*if(tb->type==TB_CALL || tb->type==TB_RET){
                             target_ulong esp=env->regs[R_ESP],tid=esp&0xffffffffffffc000,current;
                             char processname[16];
                             cpu_memory_rw_debug(cpu,tid,(uint8_t *)&current,sizeof(current),0);
