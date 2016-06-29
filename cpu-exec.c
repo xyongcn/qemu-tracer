@@ -533,26 +533,32 @@ int cpu_exec(CPUState *cpu)
                     /* execute the generated code */
                     next_tb = cpu_tb_exec(cpu, tc_ptr);
                     
-                    if(qemu_loglevel_mask(CPU_LOG_FUNC)){
-                        if(funcistraced(env->eip)!=-1 && (next_tb & TB_EXIT_MASK)==0){
+                    if(qemu_loglevel_mask(CPU_LOG_FUNC) && (next_tb & TB_EXIT_MASK)<=1 ){
+                    	int id=funcistraced(env->eip);                    	
+                        if(id!=-1){                        	
                             if(tb->type==TB_CALL){
-                                target_ulong esp=env->regs[R_ESP],tid=esp&0xffffffffffffc000,current;
+                                target_ulong esp=env->regs[R_ESP],tip=esp&0xffffffffffffc000,current;
+								uint32_t pid;
                                 char processname[16];
-                                cpu_memory_rw_debug(cpu,tid,(uint8_t *)&current,sizeof(current),0);
+                                cpu_memory_rw_debug(cpu,tip,(uint8_t *)&current,sizeof(current),0);
                                 cpu_memory_rw_debug(cpu,current+0x5e0,(uint8_t *)&processname,sizeof(processname),0);
-                                qemu_log("C,%s,\n",processname);
-                                if(strstr(processname,target)){
-                                    target_ulong ebp=env->regs[R_EBP],eip=env->eip;                         
-                                    int i;
-                                    qemu_log("calling "TARGET_FMT_lx"\n", eip);
-                                    eip=tb->pc+tb->size;
-                                    for(i=0;ebp!=0&&i<20;i++){
-                                        qemu_log("ebp:0x"TARGET_FMT_lx" eip:0x"TARGET_FMT_lx"\n", ebp, eip);
-                                        cpu_memory_rw_debug(cpu,ebp+sizeof(target_ulong),(uint8_t *)&eip,sizeof(eip),0);
-                                        cpu_memory_rw_debug(cpu,ebp,(uint8_t *)&ebp,sizeof(ebp),0);
+								cpu_memory_rw_debug(cpu,current+0x438,(uint8_t *)&pid,sizeof(pid),0);
+								qemu_log("%s,"TARGET_FMT_lx",%d,"TARGET_FMT_lx","TARGET_FMT_lx,processname,env->cr[3],pid,esp,env->eip);
+                                int i;
+                                for(i=0;funcargv[id][i]!='\0';i++){
+                                    switch(funcargv[id][i]){
+                                        case 'v':break;
+                                        case 'i':qemu_log(","TARGET_FMT_ld,env->regs[argorder[i]]);break;
+                                        case 's':{
+                                            char tmp[100];
+                                            cpu_memory_rw_debug(cpu,env->regs[argorder[i]],(uint8_t *)&tmp,sizeof(tmp),0);
+                                            qemu_log(",%s",tmp);
+                                            }
+                                            break;
+                                        case 'o':qemu_log(","TARGET_FMT_lx,env->regs[argorder[i]]);break;
                                     }
-                                    qemu_log("\n");
                                 }
+                                qemu_log("\n");
                             }
                         }                 
                         /*if(tb->type==TB_CALL || tb->type==TB_RET){
