@@ -529,7 +529,7 @@ int cpu_exec(CPUState *cpu)
                 barrier();
                 if (likely(!cpu->exit_request)) {
                     trace_exec_tb(tb, tb->pc);
-                    tc_ptr = tb->tc_ptr;
+                    tc_ptr = tb->tc_ptr;                    
                     /* execute the generated code */
                     next_tb = cpu_tb_exec(cpu, tc_ptr);
                     
@@ -542,25 +542,50 @@ int cpu_exec(CPUState *cpu)
                                 char processname[16];
                                 cpu_memory_rw_debug(cpu,tip,(uint8_t *)&current,sizeof(current),0);
                                 cpu_memory_rw_debug(cpu,current+0x5e0,(uint8_t *)&processname,sizeof(processname),0);
-								cpu_memory_rw_debug(cpu,current+0x438,(uint8_t *)&pid,sizeof(pid),0);
-								qemu_log("%s,"TARGET_FMT_lx",%d,"TARGET_FMT_lx","TARGET_FMT_lx,processname,env->cr[3],pid,esp,env->eip);
-                                int i;
-                                for(i=0;funcargv[id][i]!='\0';i++){
-                                    switch(funcargv[id][i]){
-                                        case 'v':break;
-                                        case 'i':qemu_log(","TARGET_FMT_ld,env->regs[argorder[i]]);break;
-                                        case 's':{
-                                            char tmp[100];
-                                            cpu_memory_rw_debug(cpu,env->regs[argorder[i]],(uint8_t *)&tmp,sizeof(tmp),0);
-                                            qemu_log(",%s",tmp);
-                                            }
-                                            break;
-                                        case 'o':qemu_log(","TARGET_FMT_lx,env->regs[argorder[i]]);break;
-                                    }
-                                }
-                                qemu_log("\n");
+                                //if(strstr(processname,target)){								
+								
+									cpu_memory_rw_debug(cpu,current+0x438,(uint8_t *)&pid,sizeof(pid),0);
+									qemu_log("%s,"TARGET_FMT_lx",%d,"TARGET_FMT_lx","TARGET_FMT_lx,processname,env->cr[3],pid,esp,env->eip);
+									int i;
+									for(i=0;funcargv[id][i]!='\0';i++){
+										switch(funcargv[id][i]){
+											case 'v':break;
+											case 'i':qemu_log(","TARGET_FMT_ld,env->regs[argorder[i]]);break;
+											case 's':{
+												char tmp[100]={0};
+												cpu_memory_rw_debug(cpu,env->regs[argorder[i]],(uint8_t *)&tmp,sizeof(tmp),0);
+												qemu_log(",%s",tmp);
+												}
+												break;
+											case 'p':{
+												target_ulong addr=env->regs[argorder[i]],value;
+												cpu_memory_rw_debug(cpu,addr,(uint8_t *)&value,sizeof(value),0);
+												qemu_log(","TARGET_FMT_lx,value);
+												}
+												break;
+											case 'n':{
+												target_ulong addr=env->regs[argorder[i]],value;
+												cpu_memory_rw_debug(cpu,addr+0x40,(uint8_t *)&value,sizeof(value),0);
+												qemu_log(","TARGET_FMT_ld,value);
+												}
+												break;
+											case 'o':qemu_log(","TARGET_FMT_lx,env->regs[argorder[i]]);break;
+										}
+									}
+									qemu_log("\n");
+                                
+								//}
                             }
-                        }                 
+                        }
+                        if(tb->pc==0xffffffff8107aa59){
+                        	target_ulong esp=env->regs[R_ESP],tip=esp&0xffffffffffffc000,current;
+							uint32_t pid;
+                            char processname[16];
+                            cpu_memory_rw_debug(cpu,tip,(uint8_t *)&current,sizeof(current),0);
+                            cpu_memory_rw_debug(cpu,current+0x5e0,(uint8_t *)&processname,sizeof(processname),0);
+							cpu_memory_rw_debug(cpu,current+0x438,(uint8_t *)&pid,sizeof(pid),0);
+                        	qemu_log("%s,"TARGET_FMT_lx",%d,"TARGET_FMT_ld" ppid\n",processname,env->cr[3],pid,env->regs[R_EAX]);
+                        }             
                         /*if(tb->type==TB_CALL || tb->type==TB_RET){
                             target_ulong esp=env->regs[R_ESP],tid=esp&0xffffffffffffc000,current;
                             char processname[16];
