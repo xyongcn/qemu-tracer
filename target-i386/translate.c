@@ -6393,7 +6393,7 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         /* control */
     case 0xc2: /* ret im */
         
-		s->tb->type = TB_RET;
+		s->tb->type = TB_RET_IM;
     
         val = cpu_ldsw_code(env, s->pc);
         s->pc += 2;
@@ -6415,7 +6415,7 @@ static target_ulong disas_insn(CPUX86State *env, DisasContext *s,
         break;
     case 0xca: /* lret im */
         
-		s->tb->type = TB_RET;
+		s->tb->type = TB_RET_IM;
     
         val = cpu_ldsw_code(env, s->pc);
         s->pc += 2;

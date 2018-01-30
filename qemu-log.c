@@ -19,11 +19,25 @@
 
 #include "qemu-common.h"
 #include "qemu/log.h"
-
+#include "comm_struct/MachineBit.h"
 static char *logfilename;
 FILE *qemu_logfile;
 int qemu_loglevel;
-static int log_append = 0;
+static int log_append = 1;
+
+//////////////////////////add by aquan
+void my_qemu_log(const char *fmt, ...)
+{
+    if(!QEMULOG) return;
+    va_list ap;
+
+    va_start(ap, fmt);
+    if (qemu_logfile) {
+        vfprintf(qemu_logfile, fmt, ap);
+    }
+    va_end(ap);
+}
+/////////////////////////
 
 void qemu_log(const char *fmt, ...)
 {
@@ -35,6 +49,7 @@ void qemu_log(const char *fmt, ...)
     }
     va_end(ap);
 }
+
 
 void qemu_log_mask(int mask, const char *fmt, ...)
 {

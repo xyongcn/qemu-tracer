@@ -230,7 +230,8 @@ struct TranslationBlock {
 #define TB_DEFAULT 0
 #define TB_CALL	   1
 #define TB_RET	   2
-#define TB_UNCCALL 3
+#define TB_UNCCALL 3 
+#define TB_RET_IM  4
 
 #include "exec/spinlock.h"
 
@@ -339,6 +340,7 @@ static inline void tb_add_jump(TranslationBlock *tb, int n,
     /* NOTE: this test is only needed for thread safety */
     if (!tb->jmp_next[n]) {
         /* patch the native jump address */
+        qemu_log("chain %lx %lx\n",tb->pc,tb_next->pc);
         tb_set_jmp_target(tb, n, (uintptr_t)tb_next->tc_ptr);
 
         /* add in TB jmp circular list */

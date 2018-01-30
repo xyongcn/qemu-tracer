@@ -28,6 +28,9 @@
 #include <errno.h>
 #include <sys/time.h>
 
+#include"include/comm_struct/List.h"
+#include<string.h>
+
 #include "config-host.h"
 
 #ifdef CONFIG_SECCOMP
@@ -41,6 +44,8 @@
 #ifdef CONFIG_SDL
 #if defined(__APPLE__) || defined(main)
 #include <SDL.h>
+
+
 int qemu_main(int argc, char **argv, char **envp);
 int main(int argc, char **argv)
 {
@@ -123,15 +128,100 @@ int main(int argc, char **argv)
 #include "exec/semihost.h"
 #include "crypto/init.h"
 
+//#include "header/MachineBit.h"
+
 typedef uint64_t target_ulong;
 #define TARGET_lx "%" PRIx64
 //~ typedef uint32_t target_ulong;
 //~ #define TARGET_lx "%08x"
-#define FUNC_MAX 30000
-#define PRAM_MAX 6
-target_ulong kernel_start,kernel_end,funcaddr[FUNC_MAX];
+
+
+//my_target_ulong funcaddr[FUNC_MAX];
+//int funcParaPos[FUNC_MAX][PARAM_MAX];
+//char funcParaType[FUNC_MAX][PARAM_MAX][20];
 int funccount=0;
-char funcargv[FUNC_MAX][PRAM_MAX],target[16];
+char target[16];
+my_target_ulong got;
+bool print_funcstack;
+int trace_type;
+
+Trace_func trace_func[FUNC_MAX];
+static void map_reg(void){
+    int byte = sizeof(my_target_ulong);
+    FILE * fp;
+    int map[11]={0};
+    char ch[10]={0};
+    int b,i,j,to;
+    char buf[100]={0};
+    char relate_path[]="/../configs/reg_map.txt";
+
+    //get qemu path, and get reg_map.txt path
+    if(readlink("/proc/self/exe",buf,sizeof(buf))==-1){
+        printf("Can not get qemu path !!!");
+        exit(0);
+    }
+    printf("%s\n",buf);
+    i = strlen(buf);
+    while(i>0){
+        if(buf[i]!='/')
+            i--;
+        else
+            break;
+    }   
+    buf[i]='\0';
+    strcat(buf,relate_path);
+    printf("%s\n",buf);
+
+    //open reg_map.txt
+    i=0;
+    fp = fopen(buf,"r");
+    while(fscanf(fp,"%d %s %d --> %d",&b,ch,&to,map+i)!=EOF){
+        if(i++==11) break;
+    }
+    fclose(fp);
+
+   for(i=0;i<funccount;i++){
+       for(j=0;j<trace_func[i].para_num;j++){
+           if(byte==4){
+               int pos = trace_func[i].para[j].pos;
+               if(pos>3){
+                    printf("reg_map.txt error,regs num can't great then 3 in x86_32\n");
+                    exit(0);
+               }
+
+               trace_func[i].para[j].reg = map[trace_func[i].para[j].pos];
+           }
+           else if(byte==8){
+               int pos = trace_func[i].para[j].pos;
+               if(pos>6){
+                    printf("reg_map.txt error,regs num can't great then 6 in x86_64\n");
+                    exit(0);
+               }
+               trace_func[i].para[j].reg = map[trace_func[i].para[j].pos+3];
+           }
+           
+           if(strcmp(trace_func[i].para[j].type,"int")==0){
+               trace_func[i].para[j].i_type = PARA_INT;
+           }
+           else if(strcmp(trace_func[i].para[j].type,"string")==0){
+               trace_func[i].para[j].i_type = PARA_STRING;
+           }
+           else if(strcmp(trace_func[i].para[j].type,"socket")==0){
+               trace_func[i].para[j].i_type = PARA_SOCKET;
+           }
+           else if(strcmp(trace_func[i].para[j].type,"cred")==0){
+               trace_func[i].para[j].i_type = PARA_CRED;
+           }
+           else if(strcmp(trace_func[i].para[j].type,"inode")==0){
+               trace_func[i].para[j].i_type = PARA_INODE;
+           }
+           else if(strcmp(trace_func[i].para[j].type,"dentry")==0){
+               trace_func[i].para[j].i_type = PARA_DENTRY;
+           }
+       }
+   }
+}
+
 
 #define MAX_VIRTIO_CONSOLES 1
 #define MAX_SCLP_CONSOLES 1
@@ -2947,6 +3037,192 @@ static void set_memory_options(uint64_t *ram_slots, ram_addr_t *maxram_size,
     }
 }
 
+/*
+param1: program which need to be traced,eg:sshd,kernel 
+param2: address range of tracing, it can be 00~ff,1f,5d..., it's union set 
+param3: record parameter, it should be string,int,socket
+param4: record link map, it should be linkMap if link map is needed, else no
+param5: record function stack, it should be funcStack else no
+ */
+List program_list;
+my_target_ulong kernel_addr_begin ;
+my_target_ulong kernel_addr_end;
+my_target_ulong user_addr_begin ;
+my_target_ulong user_addr_end;
+
+//int is_record_kernel;
+//int is_record_user;
+
+
+static int print_str_list(char * a,void *e){
+    printf("%s     ",a);
+    return 0;
+}
+
+static int read_configs(void){
+
+//  read program_name;
+    FILE *fp = fopen("configs.txt","r");
+    char line[200]={0};
+    char * item;
+    int i,j;
+    // 16 means the longgest length of program's name
+    initList(&program_list,16); 
+    if(fgets(line,sizeof(line)/sizeof(char),fp)==NULL){
+        printf("read program name error!");
+        exit(0);
+    }
+
+    line[strlen(line)-1]=0; // delete end '\n'
+    item=strtok(line,(char*)",");
+    while(item!=NULL){
+        appendList(&program_list,item);
+        item = strtok(NULL,(char*)",");
+    }
+    traverseList(&program_list,(TRAVERSEFUNC)print_str_list,0);
+    printf("\n");
+    
+    //read kernel address range
+    if(fgets(line,sizeof(line)/sizeof(char),fp)==NULL){
+        printf("read address range error!");
+        exit(0);
+    }
+    int line_len=strlen(line);
+    line[line_len-1]=0;
+    if(strstr(line,"~")!=NULL){
+        item=strtok(line,(char*)"~");
+        kernel_addr_begin = hex2int(item);
+        item=strtok(NULL,(char*)"~");
+        kernel_addr_end = hex2int(item);
+    }
+    else{
+        kernel_addr_begin = 0;
+        kernel_addr_end = kernelMaxAddr;
+    }
+
+    //read user address range
+    if(fgets(line,sizeof(line)/sizeof(char),fp)==NULL){
+        printf("read address range error!");
+        exit(0);
+    }
+    line_len=strlen(line);
+    line[line_len-1]=0;
+    if(strstr(line,"~")!=NULL){
+        item=strtok(line,(char*)"~");
+        user_addr_begin = hex2int(item);
+        item=strtok(NULL,(char*)"~");
+        user_addr_end = hex2int(item);
+    }
+    else{
+        user_addr_begin = 0;
+        user_addr_end = kernelMinAddr-1;
+    }
+
+    // read information about printing linkMap or not
+    if(fgets(line,sizeof(line)/sizeof(char),fp)==NULL){
+        printf("print linkmap parameter error!");
+        exit(0);
+    }
+    item = strtok(line,(char*)":");
+    if(strcmp(item,"linkmap")!=0){
+        printf("print linkmap parameter error!");
+        exit(0);
+    }
+    item =  strtok(NULL,(char*)":");
+    if(strcmp(item,"0")!=0){
+        got = hex2int(item);
+    }
+
+    // read information about printing function stack or not
+    if(fgets(line,sizeof(line)/sizeof(char),fp)==NULL){
+        printf("print function stack parameter error!");
+        exit(0);
+    }
+    if(strstr(line,"funcstack:1")!=NULL){
+        print_funcstack = true;
+    }
+    else{
+        print_funcstack = false;
+    }
+
+    trace_type = RECORD_FUNC_NO;
+
+    // only record specified kernel function
+    if(fgets(line,sizeof(line)/sizeof(char),fp)==NULL){
+        printf("only record specified kernel function parameter error!");
+        exit(0);
+    }
+    if(strstr(line,"trace_type:spec_func_with_param")!=NULL){
+        //only record specific func call 
+        trace_type = RECORD_SPEC_FUNC;
+    }
+    else if(strstr(line,"trace_type:all_func_without_param")!=NULL){
+        //record all func without parameter
+        trace_type = RECORD_ALL_FUNC_WITHOUT_PARA;
+    }
+    else if(strstr(line,"trace_type:all_func_with_param")!=NULL){
+        //record all func with parameter
+        trace_type = RECORD_ALL_FUNC_WITH_PARA;
+    }
+    else if(strstr(line,"trace_type:process_func_without_param")!=NULL){
+        //record specified process func without parameter
+        trace_type = RECORD_PROCESS_FUNC_WITHOUT_PARA;
+    }
+    else if(strstr(line,"trace_type:process_func_with_param")!=NULL){
+        //record specified process func with parameter
+        trace_type = RECORD_PROCESS_FUNC_WITH_PARA;
+    }
+    else if(strstr(line,"trace_type:normal")!=NULL){
+        trace_type = RECORD_NORMAL;
+    }else{
+        printf("trace type error!!!");
+        exit(0);
+    }
+
+    //read specified address and paramenter info 
+    funccount=0;
+    while(fgets(line,sizeof(line)/sizeof(char),fp)!=NULL){
+        line_len=strlen(line);
+        line[line_len-1]=0;
+        item=strtok(line,(char*)",");
+        trace_func[funccount].funcaddr=hex2int(item);
+
+        j=0;
+        while(item){
+            item = strtok(NULL,(char*)",");
+            if(!item) break;
+            int int_item = hex2int(item);
+
+             //trace_func[*].para[0] is only for return value, when it is not configured, we make i++ to skip it 
+            if(int_item != 0 && j==0) j++;
+
+            trace_func[funccount].para[j].pos = hex2int(item);
+            item = strtok(NULL,(char*)",");
+            memcpy(trace_func[funccount].para[j].type,item,strlen(item));
+            j++;
+        }
+        trace_func[funccount].para_num = j;
+        funccount++;
+    }
+    fclose(fp);
+    map_reg();
+
+    printf(MY_TARGET_lx","MY_TARGET_lx"\n",kernel_addr_begin,kernel_addr_end);
+    printf(MY_TARGET_lx","MY_TARGET_lx"\n",user_addr_begin,user_addr_end);
+    for(i=0;i<funccount;i++){
+        printf(MY_TARGET_lx" ",trace_func[i].funcaddr);
+        for(j=0;j<trace_func[i].para_num;j++){
+            printf("pos:%d reg:%d type:%s itype:%d\n",trace_func[i].para[j].pos,trace_func[i].para[j].reg,trace_func[i].para[j].type,trace_func[i].para[j].i_type);
+        }
+    }
+
+//    is_record_kernel = IndexOfStr(&program_list,(char *)"kernel");
+//    is_record_user = IndexOfStr(&program_list,(char *)"user");
+
+    return 0;
+}
+
+
 int main(int argc, char **argv, char **envp)
 {
     int i;
@@ -4105,14 +4381,16 @@ int main(int argc, char **argv, char **envp)
         qemu_set_log(mask);
         
         if (qemu_loglevel_mask(CPU_LOG_FUNC)) {    
-            FILE *fp = fopen("configs.txt", "r");
-            if(fscanf(fp,TARGET_lx TARGET_lx" %s",&kernel_start,&kernel_end,target)){
-                while(fscanf(fp,TARGET_lx" %s",&funcaddr[funccount],funcargv[funccount])!=-1)
-                    funccount++;
-            }
-            fclose(fp);
+            /*
+            param1: program which need to be traced,eg:sshd,kernel 
+            param2: address range of tracing, it can be 00~ff,1f,5d..., it's union set 
+            param3: record parameter, it should be string,int,socket
+            param4: record link map, it should be linkMap if link map is needed, else no
+            param5: record function stack, it should be funcStack else no
+             */
+
+            read_configs();
 		}
-		
     }
 
     if (!is_daemonized()) {
@@ -4334,7 +4612,7 @@ int main(int argc, char **argv, char **envp)
         object_unref(OBJECT(current_machine));
         exit(1);
     }
-
+    
     configure_accelerator(current_machine);
 
     if (qtest_chrdev) {
